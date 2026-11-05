@@ -199,8 +199,8 @@ function orderCard(o,isStaff){
   if(isStaff){
     if(o.status==='pending_review')a=`${changed?`<input id="mv-${o.id}" placeholder="Motivo del cambio (ej.: faltante de stock)" aria-label="Motivo del cambio" style="margin-top:8px">`:''}<div class="acts"><button class="btn" data-a="apr" data-id="${o.id}">${changed?'Enviar cambios al cliente':'Aprobar tal cual'}</button></div><p class="tag">Podés ajustar o quitar productos antes de aprobar.</p>`;
     else if(o.status==='awaiting_client')a=`<p class="tag">Esperando respuesta del cliente${o.expires_at?' hasta '+dt(o.expires_at):''}.</p>`;
-    else if(NEXT[o.status])a=`<div class="acts"><button class="btn" data-a="adv" data-id="${o.id}">Pasar a “${ST[NEXT[o.status]]}”</button><button class="btn alt" data-a="pdf" data-id="${o.id}">PDF para Alegra</button><button class="btn alt" data-a="sheetp" data-id="${o.id}">Hoja de armado</button></div>`;
-    else if(o.status==='delivered')a=`<div class="acts"><button class="btn alt" data-a="pdf" data-id="${o.id}">PDF para Alegra</button></div>`;
+    else if(NEXT[o.status])a=`${alegraBlock(o)}<div class="acts">${alegraBtn(o)}<button class="btn" data-a="adv" data-id="${o.id}">Pasar a “${ST[NEXT[o.status]]}”</button><button class="btn alt" data-a="pdf" data-id="${o.id}">PDF para Alegra</button><button class="btn alt" data-a="sheetp" data-id="${o.id}">Hoja de armado</button></div>`;
+    else if(o.status==='delivered')a=`${alegraBlock(o)}<div class="acts">${alegraBtn(o)}<button class="btn alt" data-a="pdf" data-id="${o.id}">PDF para Alegra</button></div>`;
     if(admin())a+=`<div class="acts"><button class="btn alt sm" data-a="del" data-id="${o.id}">Borrar pedido</button></div>`;
   }else{
     if(wait)a=exp?`<p class="err">El plazo para responder venció. Hablá con tu vendedor para retomar el pedido.</p>`:`<div class="alert">Modificamos tu pedido${o.change_reason?': '+esc(o.change_reason):''}. Revisá los cambios y confirmá antes del ${dt(o.expires_at)}.</div><div class="acts"><button class="btn" data-a="acc" data-id="${o.id}">Aceptar cambios</button><button class="btn alt" data-a="rej" data-id="${o.id}">Rechazar</button></div>`;
@@ -212,6 +212,22 @@ function orderCard(o,isStaff){
   return `<div class="card ${wait&&!exp?'act':''}"><div class="meta"><h3>Pedido #${o.id}</h3><span class="st ${st}">${ST[st]}</span></div><small class="tag">${dt(o.created_at)}${isStaff?' · '+esc(o.clients?o.clients.name:''):''} · ${invTxt(o.invoice_type)}</small><div style="margin-top:6px">${lines}</div>${totals(ls,o.invoice_type)}${o.note?`<p class="tag">Aclaración: ${esc(o.note)}</p>`:''}${a}</div>`}
 function ordView(){const mine=S.orders;const n=mine.filter(o=>o.status==='awaiting_client').length;
   return (n?`<div class="alert">Tenés ${n} ${n===1?'pedido con cambios':'pedidos con cambios'} para revisar.</div>`:'')+(mine.length?mine.map(o=>orderCard(o,false)).join(''):'<p class="empty">Todavía no hiciste pedidos.</p>')}
+function alegraBlock(o){
+  if(!o.alegra_estimate_id)return '';
+  let h=`<p class="tag">Cargado en Alegra · Presupuesto ${esc(o.alegra_estimate_number||o.alegra_estimate_id)}</p>`;
+  const w=o.alegra_warnings;
+  if(Array.isArray(w)&&w.length)h+=`<p class="warn">Se cargó con el precio de la app. Difería de Alegra en: ${w.map(x=>esc(x.name)+' (app '+fmt(x.app)+', Alegra '+fmt(x.alegra)+')').join('; ')}</p>`;
+  return h}
+const alegraBtn=o=>o.alegra_estimate_id?'':`<button class="btn" data-a="alegra" data-id="${o.id}">Cargar en Alegra</button>`;
+async function alegraLoad(id,confirmDiffs){
+  const{data,error}=await sb.functions.invoke('alegra-estimate',{body:{order_id:id,confirm_diffs:confirmDiffs}});
+  if(error){let m=error.message;try{const b=await error.context.json();m=b.error||m}catch(e){}throw new Error(m)}
+  if(data&&data.error)throw new Error(data.error);
+  if(data&&data.status==='price_diff'){
+    const txt=data.diffs.map(d=>`• ${d.name}: app ${fmt(d.app)} / Alegra ${fmt(d.alegra)}`).join('\n');
+    if(confirm('Estos precios son distintos en Alegra:\n\n'+txt+'\n\n¿Cargar el presupuesto igual, con el precio de la app?'))return alegraLoad(id,true);
+    render();return}
+  await loadOrders();render();toast('Presupuesto '+(data.number||'')+' cargado en Alegra.')}
 const TABS=[['pending_review','Pendientes',['pending_review']],['awaiting_client','Esperan al cliente',['awaiting_client']],['active','Confirmados',['confirmed','preparing','shipped']],['closed','Cerrados',['delivered','rejected','expired']]];
 function staffOrders(){
   const t=TABS.find(x=>x[0]===S.tab)||TABS[0];
@@ -288,8 +304,8 @@ async function previewPrices(file){
     const old=cur[code]?Number(cur[code].price_per_kg):null,pct=old?((price-old)/old)*100:null;
     if(pct!==null&&Math.abs(pct)>25)warns.push(`${name}: el precio cambia ${pct.toFixed(0)}%. Verificá que sea correcto.`);
     if(cur[code]&&cur[code].name!==name)warns.push(`El código ${code} cambia de nombre: “${cur[code].name}” pasa a “${name}”.`);
-    const c0=cur[code],notes=[];if(c0){if(Number(c0.multiple)!==mult)notes.push(`múltiplo ${kg(c0.multiple)} → ${kg(mult)}`);if(c0.active!==yes(r[5]))notes.push(yes(r[5])?'se activa':'se oculta');if(c0.category!==(String(r[2]).trim()||'Otros'))notes.push('cambia la categoría')}
-    out.push({code,name,category:String(r[2]).trim(),price,multiple:mult,active:yes(r[5]),old,pct,isNew:!cur[code],notes})});
+    const acode=String(r[6]==null?'':r[6]).trim(),c0=cur[code],notes=[];if(c0){if((c0.alegra_code||'')!==acode)notes.push('código Alegra');if(Number(c0.multiple)!==mult)notes.push(`múltiplo ${kg(c0.multiple)} → ${kg(mult)}`);if(c0.active!==yes(r[5]))notes.push(yes(r[5])?'se activa':'se oculta');if(c0.category!==(String(r[2]).trim()||'Otros'))notes.push('cambia la categoría')}
+    out.push({code,name,category:String(r[2]).trim(),price,multiple:mult,active:yes(r[5]),alegra_code:acode,old,pct,isNew:!cur[code],notes})});
   S.products.filter(p=>p.active&&!seenC.has(p.code)).forEach(p=>warns.push(`${p.name} no está en el archivo y sigue visible con su precio anterior.`));
   const ch=out.filter(r=>r.isNew||r.old!==r.price||r.notes.length);
   S.prev={rows:out,errors,warns,show:ch,nuevos:out.filter(r=>r.isNew).length,cambian:out.filter(r=>!r.isNew&&(r.old!==r.price||r.notes.length)).length,iguales:out.filter(r=>!r.isNew&&r.old===r.price&&!r.notes.length).length};
@@ -337,15 +353,16 @@ document.addEventListener('click',e=>{
       const changes=itemsOf(o).filter(i=>qOf(o,i)!==i.qty).map(i=>({item_id:i.id,qty:qOf(o,i)}));
       const r=await ok(sb.rpc('review_order',{p_order:o.id,p_changes:changes,p_reason:mv?mv.value:null}));delete S.edits[o.id];await loadOrders();render();toast(r==='confirmed'?'Pedido confirmado. Se avisó al cliente.':'Se enviaron los cambios al cliente.')}
     else if(a==='adv'){await ok(sb.rpc('advance_order',{p_order:+t.dataset.id}));await loadOrders();render()}
+    else if(a==='alegra'){t.disabled=true;t.textContent='Cargando en Alegra…';try{await alegraLoad(+t.dataset.id,false)}catch(err){render();throw err}}
     else if(a==='pdf')pdfOrder(S.orders.find(x=>x.id==t.dataset.id));
     else if(a==='sheetp')printSheet(S.orders.find(x=>x.id==t.dataset.id));
     else if(a==='del'){if(confirm('¿Borrar el pedido #'+t.dataset.id+'? Esta acción no se puede deshacer.')){await ok(sb.from('orders').delete().eq('id',+t.dataset.id));await loadOrders();render()}}
     else if(a==='savecfg'){const v=[['min_order',Math.max(0,parseInt($('#s1').value,10)||0)],['response_hours',Math.max(1,parseInt($('#s2').value,10)||48)],['whatsapp',$('#s3').value.replace(/\D/g,'')]];
       await ok(sb.from('settings').upsert(v.map(([key,value])=>({key,value}))));v.forEach(([k,x])=>S.settings[k]=x);toast('Ajustes guardados.')}
     else if(a==='cancelprev'){S.prev=null;render()}
-    else if(a==='applyprices'){const r=await ok(sb.rpc('import_prices',{p_rows:S.prev.rows.map(x=>({code:x.code,name:x.name,category:x.category,price:x.price,multiple:x.multiple,active:x.active}))}));
+    else if(a==='applyprices'){const r=await ok(sb.rpc('import_prices',{p_rows:S.prev.rows.map(x=>({code:x.code,name:x.name,category:x.category,price:x.price,multiple:x.multiple,active:x.active,alegra_code:x.alegra_code}))}));
       const pr=await sb.from('products').select('*').order('category').order('name');S.products=pr.data||[];S.prev=null;render();toast(`Listo: ${r.nuevos} nuevos, ${r.precios_cambiados} precios actualizados.`)}
-    else if(a==='dlprices'){const ws=XLSX.utils.aoa_to_sheet([['Código (único, no cambiar)','Nombre (igual que en Alegra)','Categoría','Precio por kg (sin IVA)','Múltiplo (kg)','Activo']].concat(S.products.map(p=>[p.code,p.name,p.category,Number(p.price_per_kg),p.multiple,p.active?'Sí':'No'])));const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Precios');XLSX.writeFile(wb,'precios_actuales.xlsx')}
+    else if(a==='dlprices'){const ws=XLSX.utils.aoa_to_sheet([['Código (único, no cambiar)','Nombre (igual que en Alegra)','Categoría','Precio por kg (sin IVA)','Múltiplo (kg)','Activo','Código Alegra (opcional)']].concat(S.products.map(p=>[p.code,p.name,p.category,Number(p.price_per_kg),Number(p.multiple),p.active?'Sí':'No',p.alegra_code||''])));const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Precios');XLSX.writeFile(wb,'precios_actuales.xlsx')}
   })});
 document.addEventListener('input',e=>{if(e.target.id==='q'){S.q=e.target.value;$('#list').innerHTML=listHTML()}else if(e.target.id==='nt'){S.note=e.target.value}});
 document.addEventListener('change',e=>{const t=e.target;run(async()=>{
