@@ -108,6 +108,9 @@ const sb=supabase.createClient(CFG.url,CFG.key);
 const $=s=>document.querySelector(s);
 const fmt=n=>'$'+Math.round(Number(n)||0).toLocaleString('es-AR');
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const r2=x=>Math.round(x*100)/100;
+const kg=n=>Number(n).toLocaleString('es-AR',{maximumFractionDigits:2,useGrouping:false});
+const pn=s=>parseFloat(String(s).replace(',','.'))||0;
 const dt=s=>new Date(s).toLocaleString('es-AR',{dateStyle:'short',timeStyle:'short'});
 const ST={pending_review:'Pendiente de revisión',awaiting_client:'Esperando confirmación',confirmed:'Confirmado',preparing:'En armado',shipped:'Enviado',delivered:'Entregado',rejected:'Rechazado',expired:'Vencido'};
 const NEXT={confirmed:'preparing',preparing:'shipped',shipped:'delivered'};
@@ -179,9 +182,9 @@ function catView(){
 function listHTML(){
   const s=S.q.trim().toLowerCase();
   const r=S.products.filter(p=>p.active&&(S.cat==='Todos'||p.category===S.cat)&&(!s||p.name.toLowerCase().includes(s)));
-  return r.length?r.map(p=>{const n=S.cart[p.code]||0;return `<article class="prod"><div class="ph" aria-hidden="true">${esc(p.name[0]||'?').toUpperCase()}</div><div class="pi"><b>${esc(p.name)}</b><span>${fmt(p.price_per_kg)} por kg</span><small>${p.multiple>1?`Se pide de a ${p.multiple} kg · ${fmt(p.price_per_kg*p.multiple)} cada ${p.multiple} kg`:'Se pide por kg'}</small></div><div class="step"><button data-a="m" data-c="${esc(p.code)}" aria-label="Quitar ${p.multiple} kg de ${esc(p.name)}" ${n?'':'disabled'}>−</button><input data-a="qty" data-c="${esc(p.code)}" inputmode="numeric" value="${n}" aria-label="Kilos de ${esc(p.name)}"><button class="pl" data-a="p" data-c="${esc(p.code)}" aria-label="Agregar ${p.multiple} kg de ${esc(p.name)}">+</button></div></article>`}).join(''):'<p class="empty">No hay productos para mostrar.</p>'}
+  return r.length?r.map(p=>{const n=S.cart[p.code]||0;return `<article class="prod"><div class="ph" aria-hidden="true">${esc(p.name[0]||'?').toUpperCase()}</div><div class="pi"><b>${esc(p.name)}</b><span>${fmt(p.price_per_kg)} por kg</span><small>${p.multiple!=1?`Se pide de a ${kg(p.multiple)} kg · ${fmt(p.price_per_kg*p.multiple)} cada ${kg(p.multiple)} kg`:'Se pide por kg'}</small></div><div class="step"><button data-a="m" data-c="${esc(p.code)}" aria-label="Quitar ${kg(p.multiple)} kg de ${esc(p.name)}" ${n?'':'disabled'}>−</button><input data-a="qty" data-c="${esc(p.code)}" inputmode="decimal" value="${kg(n)}" aria-label="Kilos de ${esc(p.name)}"><button class="pl" data-a="p" data-c="${esc(p.code)}" aria-label="Agregar ${kg(p.multiple)} kg de ${esc(p.name)}">+</button></div></article>`}).join(''):'<p class="empty">No hay productos para mostrar.</p>'}
 const cartLines=()=>Object.entries(S.cart).map(([code,q])=>{const p=S.products.find(x=>x.code===code);return p?{code,n:p.name,p:Number(p.price_per_kg),q}:null}).filter(Boolean);
-function bar(){const ls=cartLines(),n=ls.reduce((a,l)=>a+l.q,0);return(S.view==='cat'&&n)?`<div class="bar"><div><span><b>${n} kg</b> · ${fmt(calc(ls,'none').sub)} sin IVA</span><button class="btn" data-a="open">Ver pedido</button></div></div>`:''}
+function bar(){const ls=cartLines(),n=r2(ls.reduce((a,l)=>a+l.q,0));return(S.view==='cat'&&n)?`<div class="bar"><div><span><b>${kg(n)} kg</b> · ${fmt(calc(ls,'none').sub)} sin IVA</span><button class="btn" data-a="open">Ver pedido</button></div></div>`:''}
 function itemsOf(o){return o.order_items.slice().sort((a,b)=>a.id-b.id)}
 function qOf(o,i){const e=S.edits[o.id];return e&&e[i.id]!==undefined?e[i.id]:i.qty}
 function orderCard(o,isStaff){
@@ -190,7 +193,7 @@ function orderCard(o,isStaff){
   const changed=its.some(i=>qOf(o,i)!==i.original_qty);
   const lines=its.map(i=>{const q=qOf(o,i),rm=q===0;
     const ctl=edit?`<div style="padding:4px 0" class="acts"><button class="btn alt sm" data-a="eq" data-o="${o.id}" data-i="${i.id}" data-d="-1" aria-label="Menos ${esc(i.product_name)}" ${q?'':'disabled'}>−</button><button class="btn alt sm" data-a="eq" data-o="${o.id}" data-i="${i.id}" data-d="1" aria-label="Más ${esc(i.product_name)}" ${q<i.original_qty?'':'disabled'}>+</button><button class="btn alt sm" data-a="ex" data-o="${o.id}" data-i="${i.id}" ${rm?'disabled':''}>Quitar</button></div>`:'';
-    return `<div class="ln ${rm?'rm':''}"><span>${esc(i.product_name)}${q!==i.original_qty&&!rm?' <small class="tag">(cambió)</small>':''}${rm?' <small class="tag">(sin stock)</small>':''}</span><span>${q!==i.original_qty?`<s>${i.original_qty}</s> `:''}${q} kg · ${fmt(i.unit_price*q)}</span></div>${ctl}`}).join('');
+    return `<div class="ln ${rm?'rm':''}"><span>${esc(i.product_name)}${q!==i.original_qty&&!rm?' <small class="tag">(cambió)</small>':''}${rm?' <small class="tag">(sin stock)</small>':''}</span><span>${q!==i.original_qty?`<s>${kg(i.original_qty)}</s> `:''}${kg(q)} kg · ${fmt(i.unit_price*q)}</span></div>${ctl}`}).join('');
   let a='';const wait=!isStaff&&o.status==='awaiting_client';
   const exp=o.expires_at&&new Date(o.expires_at)<new Date();
   if(isStaff){
@@ -217,8 +220,8 @@ function staffOrders(){
 function settingsView(){return `<div class="card"><h3 style="margin:0 0 4px">Ajustes</h3><label for="s1">Pedido mínimo (sin IVA, en pesos)</label><input id="s1" type="number" min="0" step="1000" value="${esc(S.settings.min_order)}"><label for="s2">Horas que tiene el cliente para responder a una modificación</label><input id="s2" type="number" min="1" value="${esc(S.settings.response_hours)}"><label for="s3">WhatsApp para coordinar pagos (con código de país, sin + ni espacios)</label><input id="s3" value="${esc(S.settings.whatsapp)}"><div class="acts"><button class="btn" data-a="savecfg">Guardar ajustes</button></div></div>`}
 function pricesView(){
   const p=S.prev;let h=`<div class="card"><h3 style="margin:0 0 6px">Actualizar precios desde Excel</h3><p class="tag">Usá la plantilla de precios. Antes de aplicar nada vas a ver una vista previa.</p><input id="pf" type="file" accept=".xlsx,.xls" aria-label="Archivo de precios"><div class="acts"><button class="btn alt" data-a="dlprices">Descargar precios actuales</button></div></div>`;
-  if(p){h+=`<div class="card"><h3 style="margin:0 0 6px">Vista previa</h3><p>${p.nuevos} nuevos · ${p.cambian} con precio distinto · ${p.iguales} sin cambios</p>`+p.errors.map(e=>`<p class="err">${esc(e)}</p>`).join('')+p.warns.map(e=>`<p class="warn">${esc(e)}</p>`).join('')+
-    (p.show.length?`<div class="scroll"><table><tr><th>Producto</th><th class="r">Antes</th><th class="r">Ahora</th><th class="r">Cambio</th></tr>${p.show.map(r=>`<tr><td>${esc(r.name)}${r.isNew?' <small class="tag">(nuevo)</small>':''}${r.active?'':' <small class="tag">(oculto)</small>'}</td><td class="r">${r.old==null?'—':fmt(r.old)}</td><td class="r">${fmt(r.price)}</td><td class="r">${r.pct==null?'':(r.pct>0?'+':'')+r.pct.toFixed(1)+'%'}</td></tr>`).join('')}</table></div>`:'<p class="tag">No hay precios nuevos ni modificados.</p>')+
+  if(p){h+=`<div class="card"><h3 style="margin:0 0 6px">Vista previa</h3><p>${p.nuevos} nuevos · ${p.cambian} con cambios · ${p.iguales} sin cambios</p>`+p.errors.map(e=>`<p class="err">${esc(e)}</p>`).join('')+p.warns.map(e=>`<p class="warn">${esc(e)}</p>`).join('')+
+    (p.show.length?`<div class="scroll"><table><tr><th>Producto</th><th class="r">Antes</th><th class="r">Ahora</th><th class="r">Cambio</th></tr>${p.show.map(r=>`<tr><td>${esc(r.name)}${r.isNew?' <small class="tag">(nuevo)</small>':''}${r.active?'':' <small class="tag">(oculto)</small>'}${r.notes.length?` <small class="tag">(${esc(r.notes.join(', '))})</small>`:''}</td><td class="r">${r.old==null?'—':fmt(r.old)}</td><td class="r">${fmt(r.price)}</td><td class="r">${r.pct==null?'':(r.pct>0?'+':'')+r.pct.toFixed(1)+'%'}</td></tr>`).join('')}</table></div>`:'<p class="tag">No hay precios nuevos ni modificados.</p>')+
     `<div class="acts"><button class="btn" data-a="applyprices" ${p.errors.length?'disabled':''}>Aplicar cambios</button><button class="btn alt" data-a="cancelprev">Cancelar</button></div></div>`}
   return h+`<p class="tag">${S.products.length} productos cargados, ${S.products.filter(x=>x.active).length} visibles para clientes.</p>`}
 function clientsView(){
@@ -228,7 +231,7 @@ function bellSheet(){
   return `<div class="sheet" data-a="close"><div role="dialog" aria-label="Avisos"><h2>Avisos</h2>${S.notifs.length?S.notifs.map(n=>`<div class="nt ${n.read?'':'un'}" data-a="nt" data-o="${n.order_id||''}"><b>${esc(n.title)}</b><div class="tag">${esc(n.body||'')} · ${dt(n.created_at)}</div></div>`).join(''):'<p class="empty">No tenés avisos.</p>'}<div class="acts"><button class="btn alt" data-a="readall">Marcar como leídos</button><button class="btn alt" data-a="close2">Cerrar</button></div></div></div>`}
 function cartSheet(){
   const ls=cartLines(),sub=calc(ls,'none').sub,min=Number(S.settings.min_order)||0,good=sub>=min;
-  return `<div class="sheet" data-a="close"><div role="dialog" aria-label="Tu pedido"><h2>Tu pedido</h2>${ls.map(l=>`<div class="ln"><span>${l.q} kg · ${esc(l.n)}</span><span>${fmt(l.p*l.q)}</span></div>`).join('')}
+  return `<div class="sheet" data-a="close"><div role="dialog" aria-label="Tu pedido"><h2>Tu pedido</h2>${ls.map(l=>`<div class="ln"><span>${kg(l.q)} kg · ${esc(l.n)}</span><span>${fmt(l.p*l.q)}</span></div>`).join('')}
   <label for="fa">¿Necesitás factura?</label><select id="fa"><option value="none"${S.inv==='none'?' selected':''}>No, solo remito (sin IVA)</option><option value="A"${S.inv==='A'?' selected':''}>Factura A (suma IVA)</option><option value="B"${S.inv==='B'?' selected':''}>Factura B (suma IVA)</option></select><div style="margin-top:10px">${totals(ls,S.inv)}</div>
   ${good?'':`<p class="warn">El pedido mínimo es ${fmt(min)} sin IVA. Te faltan ${fmt(min-sub)}.</p>`}<label for="nt">Aclaraciones</label><textarea id="nt" rows="2" placeholder="Ej.: entregar por la mañana">${esc(S.note)}</textarea>
   <div class="acts"><button class="btn" data-a="send" ${good&&ls.length?'':'disabled'}>Enviar pedido</button><button class="btn alt" data-a="close2">Seguir agregando</button></div></div></div>`}
@@ -252,7 +255,7 @@ function sheetRender(){$('#sheet').innerHTML=S.sheet==='cart'?cartSheet():S.shee
 function refreshCat(){$('#list').innerHTML=listHTML();const b=$('.bar');const x=document.createElement('div');x.innerHTML=bar();if(b)b.remove();if(x.firstChild)document.body.appendChild(x.firstChild)}
 
 /* ---------- Carrito ---------- */
-function setQty(code,v){const p=S.products.find(x=>x.code===code);v=Math.max(0,Math.round(v)||0);if(v%p.multiple){const r=Math.round(v/p.multiple)*p.multiple;toast(`${p.name} se pide de a ${p.multiple} kg. Lo ajustamos a ${r} kg.`);v=r}if(v)S.cart[code]=v;else delete S.cart[code]}
+function setQty(code,v){const p=S.products.find(x=>x.code===code);const m=Number(p.multiple);v=Math.max(0,r2(Number(v)||0));if(Math.round(v*100)%Math.round(m*100)){const r=r2(Math.round(v/m)*m);toast(`${p.name} se pide de a ${kg(m)} kg. Lo ajustamos a ${kg(r)} kg.`);v=r}if(v)S.cart[code]=v;else delete S.cart[code]}
 
 /* ---------- PDF para Alegra (mismo formato que pedido_11.pdf) ---------- */
 function pdfOrder(o){
@@ -260,12 +263,12 @@ function pdfOrder(o){
   d.setFont('helvetica','normal');d.setFontSize(11);
   let y=90;d.text('cliente:',118,y);d.text(String(o.clients?o.clients.name:''),246,y);
   y+=30;d.text('Descripcion de producto',118,y);d.text('cantidad',370,y,{align:'right'});
-  itemsOf(o).filter(i=>i.qty>0).forEach(i=>{y+=15;d.text(i.product_name,118,y);d.text(String(i.qty),370,y,{align:'right'})});
+  itemsOf(o).filter(i=>i.qty>0).forEach(i=>{y+=15;d.text(i.product_name,118,y);d.text(kg(i.qty),370,y,{align:'right'})});
   if(o.invoice_type!=='none'){y+=30;d.text(`factura: ${o.invoice_type} (sumar IVA ${Math.round(IVA()*100)}% manualmente)`,118,y)}
   d.save(`pedido_${o.id}.pdf`)}
 function printSheet(o){
   const its=itemsOf(o).filter(i=>i.qty>0);
-  $('#printarea').innerHTML=`<h2>Hoja de armado · Pedido #${o.id}</h2><p><b>Cliente:</b> ${esc(o.clients?o.clients.name:'')}<br><b>Fecha:</b> ${dt(o.created_at)}${o.note?`<br><b>Aclaración:</b> ${esc(o.note)}`:''}</p><table><tr><th>Producto</th><th>Kg</th><th>Armado</th></tr>${its.map(i=>`<tr><td>${esc(i.product_name)}</td><td>${i.qty}</td><td>☐</td></tr>`).join('')}</table><p>Total: ${its.reduce((a,i)=>a+i.qty,0)} kg</p>`;
+  $('#printarea').innerHTML=`<h2>Hoja de armado · Pedido #${o.id}</h2><p><b>Cliente:</b> ${esc(o.clients?o.clients.name:'')}<br><b>Fecha:</b> ${dt(o.created_at)}${o.note?`<br><b>Aclaración:</b> ${esc(o.note)}`:''}</p><table><tr><th>Producto</th><th>Kg</th><th>Armado</th></tr>${its.map(i=>`<tr><td>${esc(i.product_name)}</td><td>${kg(i.qty)}</td><td>☐</td></tr>`).join('')}</table><p>Total: ${kg(r2(its.reduce((a,i)=>a+Number(i.qty),0)))} kg</p>`;
   window.print()}
 
 /* ---------- Excel ---------- */
@@ -275,20 +278,21 @@ async function readSheet(file){const wb=XLSX.read(await file.arrayBuffer(),{type
 async function previewPrices(file){
   const rows=await readSheet(file),errors=[],warns=[],out=[],seenC=new Set(),seenN=new Set();
   const cur=Object.fromEntries(S.products.map(p=>[p.code,p]));
-  rows.forEach((r,i)=>{const n=i+2,code=String(r[0]).trim(),name=String(r[1]).trim(),price=num(r[3]),mult=parseInt(r[4],10);
+  rows.forEach((r,i)=>{const n=i+2,code=String(r[0]).trim(),name=String(r[1]).trim(),price=num(r[3]),mult=r2(num(r[4]));
     if(!code||!name){errors.push(`Fila ${n}: falta el código o el nombre.`);return}
     if(!(price>0)){errors.push(`Fila ${n} (${name}): el precio no es válido.`);return}
-    if(!(mult>=1)){errors.push(`Fila ${n} (${name}): el múltiplo debe ser 1 o más.`);return}
+    if(!(mult>0)){errors.push(`Fila ${n} (${name}): el múltiplo debe ser mayor a 0.`);return}
     if(seenC.has(code))errors.push(`Fila ${n}: el código ${code} está repetido.`);
     if(seenN.has(name.toLowerCase()))errors.push(`Fila ${n}: el nombre “${name}” está repetido.`);
     seenC.add(code);seenN.add(name.toLowerCase());
     const old=cur[code]?Number(cur[code].price_per_kg):null,pct=old?((price-old)/old)*100:null;
     if(pct!==null&&Math.abs(pct)>25)warns.push(`${name}: el precio cambia ${pct.toFixed(0)}%. Verificá que sea correcto.`);
     if(cur[code]&&cur[code].name!==name)warns.push(`El código ${code} cambia de nombre: “${cur[code].name}” pasa a “${name}”.`);
-    out.push({code,name,category:String(r[2]).trim(),price,multiple:mult,active:yes(r[5]),old,pct,isNew:!cur[code]})});
+    const c0=cur[code],notes=[];if(c0){if(Number(c0.multiple)!==mult)notes.push(`múltiplo ${kg(c0.multiple)} → ${kg(mult)}`);if(c0.active!==yes(r[5]))notes.push(yes(r[5])?'se activa':'se oculta');if(c0.category!==(String(r[2]).trim()||'Otros'))notes.push('cambia la categoría')}
+    out.push({code,name,category:String(r[2]).trim(),price,multiple:mult,active:yes(r[5]),old,pct,isNew:!cur[code],notes})});
   S.products.filter(p=>p.active&&!seenC.has(p.code)).forEach(p=>warns.push(`${p.name} no está en el archivo y sigue visible con su precio anterior.`));
-  const ch=out.filter(r=>r.isNew||r.old!==r.price);
-  S.prev={rows:out,errors,warns,show:ch,nuevos:out.filter(r=>r.isNew).length,cambian:out.filter(r=>!r.isNew&&r.old!==r.price).length,iguales:out.filter(r=>!r.isNew&&r.old===r.price).length};
+  const ch=out.filter(r=>r.isNew||r.old!==r.price||r.notes.length);
+  S.prev={rows:out,errors,warns,show:ch,nuevos:out.filter(r=>r.isNew).length,cambian:out.filter(r=>!r.isNew&&(r.old!==r.price||r.notes.length)).length,iguales:out.filter(r=>!r.isNew&&r.old===r.price&&!r.notes.length).length};
   render()}
 async function importClients(file){
   const rows=await readSheet(file),bad=[],data=[];
@@ -311,7 +315,7 @@ document.addEventListener('click',e=>{
     if(a==='v'){S.view=t.dataset.v;S.sheet=null;if(S.view==='clients')await loadClients();if(S.view==='prices')S.prev=null;render();window.scrollTo(0,0)}
     else if(a==='c'){S.cat=t.dataset.c;render()}
     else if(a==='tab'){S.tab=t.dataset.t;render()}
-    else if(a==='p'||a==='m'){const p=S.products.find(x=>x.code===t.dataset.c);setQty(p.code,(S.cart[p.code]||0)+(a==='p'?p.multiple:-p.multiple));refreshCat()}
+    else if(a==='p'||a==='m'){const p=S.products.find(x=>x.code===t.dataset.c);setQty(p.code,r2((S.cart[p.code]||0)+(a==='p'?Number(p.multiple):-Number(p.multiple))));refreshCat()}
     else if(a==='open'){S.sheet='cart';sheetRender()}
     else if(a==='close'||a==='close2'){S.sheet=null;sheetRender()}
     else if(a==='bell'){S.sheet='bell';sheetRender()}
@@ -327,7 +331,7 @@ document.addEventListener('click',e=>{
       S.lastId=await ok(sb.rpc('submit_order',{p_invoice:S.inv,p_note:S.note,p_items:items}));S.cart={};S.inv='none';S.note='';S.sheet=null;await loadOrders();S.view='ok';render()}
     else if(a==='rep'){const o=S.orders.find(x=>x.id==t.dataset.id);S.cart={};let miss=0;itemsOf(o).forEach(i=>{const p=S.products.find(x=>x.code===i.product_code&&x.active);if(p)S.cart[p.code]=i.original_qty;else miss++});S.inv=o.invoice_type;S.view='cat';render();S.sheet='cart';sheetRender();if(miss)toast(`${miss} producto(s) ya no están disponibles y no se agregaron.`)}
     else if(a==='acc'||a==='rej'){await ok(sb.rpc('respond_to_order',{p_order:+t.dataset.id,p_accept:a==='acc'}));await loadOrders();render();toast(a==='acc'?'Pedido confirmado.':'Pedido rechazado.')}
-    else if(a==='eq'){const o=S.orders.find(x=>x.id==t.dataset.o),i=o.order_items.find(x=>x.id==t.dataset.i);const e2=S.edits[o.id]=S.edits[o.id]||{};const q=(e2[i.id]!==undefined?e2[i.id]:i.qty)+(+t.dataset.d)*i.multiple;e2[i.id]=Math.max(0,Math.min(i.original_qty,q));render()}
+    else if(a==='eq'){const o=S.orders.find(x=>x.id==t.dataset.o),i=o.order_items.find(x=>x.id==t.dataset.i);const e2=S.edits[o.id]=S.edits[o.id]||{};const q=r2((e2[i.id]!==undefined?e2[i.id]:i.qty)+(+t.dataset.d)*Number(i.multiple));e2[i.id]=Math.max(0,Math.min(Number(i.original_qty),q));render()}
     else if(a==='ex'){const o=S.orders.find(x=>x.id==t.dataset.o);(S.edits[o.id]=S.edits[o.id]||{})[+t.dataset.i]=0;render()}
     else if(a==='apr'){const o=S.orders.find(x=>x.id==t.dataset.id),mv=$('#mv-'+o.id);
       const changes=itemsOf(o).filter(i=>qOf(o,i)!==i.qty).map(i=>({item_id:i.id,qty:qOf(o,i)}));
@@ -345,7 +349,7 @@ document.addEventListener('click',e=>{
   })});
 document.addEventListener('input',e=>{if(e.target.id==='q'){S.q=e.target.value;$('#list').innerHTML=listHTML()}else if(e.target.id==='nt'){S.note=e.target.value}});
 document.addEventListener('change',e=>{const t=e.target;run(async()=>{
-  if(t.dataset.a==='qty'){setQty(t.dataset.c,parseInt(t.value,10)||0);refreshCat()}
+  if(t.dataset.a==='qty'){setQty(t.dataset.c,pn(t.value));refreshCat()}
   else if(t.id==='fa'){S.inv=t.value;sheetRender()}
   else if(t.id==='pf'&&t.files[0])await previewPrices(t.files[0]);
   else if(t.id==='cf'&&t.files[0]){await importClients(t.files[0]);t.value=''}})});
