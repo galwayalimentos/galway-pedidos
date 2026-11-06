@@ -240,7 +240,12 @@ function staffOrders(){
   const t=TABS.find(x=>x[0]===S.tab)||TABS[0];
   const r=S.orders.filter(o=>t[2].includes(o.status));
   return `<div class="chips">${TABS.map(([k,l,s])=>{const n=S.orders.filter(o=>s.includes(o.status)).length;return `<button data-a="tab" data-t="${k}" aria-pressed="${S.tab===k}">${l} (${n})</button>`}).join('')}</div>`+(r.length?r.map(o=>orderCard(o,true)).join(''):'<p class="empty">No hay pedidos en esta lista.</p>')}
-function settingsView(){return `<div class="card"><h3 style="margin:0 0 4px">Ajustes</h3><label for="s1">Pedido mínimo (sin IVA, en pesos)</label><input id="s1" type="number" min="0" step="1000" value="${esc(S.settings.min_order)}"><label for="s2">Horas que tiene el cliente para responder a una modificación</label><input id="s2" type="number" min="1" value="${esc(S.settings.response_hours)}"><label for="s3">WhatsApp para coordinar pagos (con código de país, sin + ni espacios)</label><input id="s3" value="${esc(S.settings.whatsapp)}"><div class="acts"><button class="btn" data-a="savecfg">Guardar ajustes</button></div></div>`}
+function ntCard(){
+  const cur=k=>Number(S.settings['alegra_nt_'+k])||0;
+  const cases=[['none','Pedido con remito (sin IVA)'],['A','Pedido con factura A'],['B','Pedido con factura B']];
+  const sel=(k,l)=>`<label for="nt-${k}">${l}</label><select id="nt-${k}"><option value="0">Predeterminada de Alegra</option>${S.nts.map(x=>`<option value="${esc(x.id)}"${cur(k)===Number(x.id)?' selected':''}>${esc(x.label)}</option>`).join('')}</select>`;
+  return `<div class="card" style="margin-top:12px"><h3 style="margin:0 0 4px">Numeración de presupuestos en Alegra</h3><p class="tag">Elegí qué numeración usa Alegra según el tipo de pedido, para que el presupuesto salga con su tipo (A, B) y su punto de venta.</p>${cases.map(([k,l])=>S.nts?sel(k,l):`<p class="tag" style="margin:6px 0">${l}: ${cur(k)?'numeración '+cur(k):'predeterminada de Alegra'}</p>`).join('')}<div class="acts"><button class="btn alt" data-a="loadnt">Consultar numeraciones de Alegra</button>${S.nts?'<button class="btn" data-a="savent">Guardar numeraciones</button>':''}</div></div>`}
+function settingsView(){return `<div class="card"><h3 style="margin:0 0 4px">Ajustes</h3><label for="s1">Pedido mínimo (sin IVA, en pesos)</label><input id="s1" type="number" min="0" step="1000" value="${esc(S.settings.min_order)}"><label for="s2">Horas que tiene el cliente para responder a una modificación</label><input id="s2" type="number" min="1" value="${esc(S.settings.response_hours)}"><label for="s3">WhatsApp para coordinar pagos (con código de país, sin + ni espacios)</label><input id="s3" value="${esc(S.settings.whatsapp)}"><div class="acts"><button class="btn" data-a="savecfg">Guardar ajustes</button></div></div>`+ntCard()}
 function pricesView(){
   const p=S.prev;let h=`<div class="card"><h3 style="margin:0 0 6px">Actualizar precios desde Excel</h3><p class="tag">Usá la plantilla de precios. Antes de aplicar nada vas a ver una vista previa.</p><input id="pf" type="file" accept=".xlsx,.xls" aria-label="Archivo de precios"><div class="acts"><button class="btn alt" data-a="dlprices">Descargar precios actuales</button></div></div>`;
   if(p){h+=`<div class="card"><h3 style="margin:0 0 6px">Vista previa</h3><p>${p.nuevos} nuevos · ${p.cambian} con cambios · ${p.iguales} sin cambios</p>`+p.errors.map(e=>`<p class="err">${esc(e)}</p>`).join('')+p.warns.map(e=>`<p class="warn">${esc(e)}</p>`).join('')+
@@ -382,6 +387,11 @@ document.addEventListener('click',e=>{
       const changes=itemsOf(o).filter(i=>qOf(o,i)!==i.qty).map(i=>({item_id:i.id,qty:qOf(o,i)}));
       const r=await ok(sb.rpc('review_order',{p_order:o.id,p_changes:changes,p_reason:mv?mv.value:null}));delete S.edits[o.id];await loadOrders();render();toast(r==='confirmed'?'Pedido confirmado. Se avisó al cliente.':'Se enviaron los cambios al cliente.')}
     else if(a==='adv'){await ok(sb.rpc('advance_order',{p_order:+t.dataset.id}));await loadOrders();render()}
+    else if(a==='loadnt'){t.disabled=true;t.textContent='Consultando Alegra…';try{const{data,error}=await sb.functions.invoke('alegra-estimate',{body:{action:'numberings'}});
+      if(error){let m=error.message;try{const b=await error.context.json();m=b.error||m}catch(e){}throw new Error(m)}
+      if(data&&data.error)throw new Error(data.error);S.nts=data.items||[];if(!S.nts.length)toast('Alegra no devolvió numeraciones de presupuestos.')}finally{render()}}
+    else if(a==='savent'){const v=['none','A','B'].map(k=>({key:'alegra_nt_'+k,value:Number($('#nt-'+k).value)||0}));
+      await ok(sb.from('settings').upsert(v));v.forEach(x=>S.settings[x.key]=x.value);toast('Numeraciones guardadas.')}
     else if(a==='alegra'){t.disabled=true;t.textContent='Cargando en Alegra…';try{await alegraLoad(+t.dataset.id,false)}catch(err){render();throw err}}
     else if(a==='pdf')pdfOrder(S.orders.find(x=>x.id==t.dataset.id));
     else if(a==='sheetp')printSheet(S.orders.find(x=>x.id==t.dataset.id));
