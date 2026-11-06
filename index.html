@@ -120,12 +120,13 @@ const qSum=ls=>{const k=r2(ls.filter(l=>l.u!=='unidad').reduce((a,l)=>a+Number(l
 const dt=s=>new Date(s).toLocaleString('es-AR',{dateStyle:'short',timeStyle:'short'});
 const ST={pending_review:'Pendiente de revisión',awaiting_client:'Esperando confirmación',confirmed:'Confirmado',preparing:'En armado',shipped:'Enviado',delivered:'Entregado',rejected:'Rechazado',expired:'Vencido'};
 const NEXT={confirmed:'preparing',preparing:'shipped',shipped:'delivered'};
-const S={view:'boot',user:null,profile:null,client:null,products:[],settings:{min_order:150000,response_hours:48,whatsapp:'5491131766172',iva_rate:0.21},orders:[],notifs:[],cart:{},cartOrder:[],cat:'Todos',q:'',inv:'none',note:'',sheet:null,edits:{},tab:'pending_review',prev:null,clients:[],links:{},lastId:null,err:'',hash0:location.hash};
+const S={view:'boot',user:null,profile:null,client:null,products:[],settings:{min_order:150000,response_hours:48,whatsapp:'5491131766172',iva_rate:0.21},orders:[],notifs:[],cart:{},cartOrder:[],cat:'Todos',q:'',inv:'none',note:'',sheet:null,edits:{},tab:'pending_review',prev:null,clients:[],links:{},reqs:[],myReq:null,su:{},lastId:null,err:'',hash0:location.hash};
 const staff=()=>S.profile&&(S.profile.role==='admin'||S.profile.role==='operator');
 const admin=()=>S.profile&&S.profile.role==='admin';
 const ok=async p=>{const r=await p;if(r.error)throw r.error;return r.data};
 const toast=t=>{const e=$('#toast');e.textContent=t;e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.display='none',4000)};
 const run=async fn=>{try{await fn()}catch(e){console.error(e);toast(e.message||'Ocurrió un error. Probá de nuevo.')}};
+const PROVS=["Buenos Aires", "CABA", "Catamarca", "Chaco", "Chubut", "Córdoba", "Corrientes", "Entre Ríos", "Formosa", "Jujuy", "La Pampa", "La Rioja", "Mendoza", "Misiones", "Neuquén", "Río Negro", "Salta", "San Juan", "San Luis", "Santa Cruz", "Santa Fe", "Santiago del Estero", "Tierra del Fuego", "Tucumán"];
 const IVA=()=>Number(S.settings.iva_rate)||0.21;
 const calc=(ls,inv)=>{const sub=ls.reduce((a,l)=>a+l.p*l.q,0);const iva=inv==='none'?0:sub*IVA();return{sub,iva,tot:sub+iva}};
 const totals=(ls,inv)=>{const c=calc(ls,inv);return `<div class="sum"><span>Subtotal sin IVA</span><span>${fmt(c.sub)}</span></div>`+(inv==='none'?'':`<div class="sum"><span>IVA ${Math.round(IVA()*100)}%</span><span>${fmt(c.iva)}</span></div>`)+`<div class="sum t"><span>Total${inv==='none'?'':' con IVA'}</span><span>${fmt(c.tot)}</span></div>`};
@@ -143,9 +144,9 @@ async function boot(){
 async function enter(){
   const p=await sb.from('profiles').select('*').eq('id',S.user.id).maybeSingle();
   S.profile=p.data;
-  if(!S.profile){S.view='noaccess';return render()}
+  if(!S.profile){const q=await sb.from('access_requests').select('*').eq('user_id',S.user.id).maybeSingle();S.myReq=q.data;S.view='noaccess';return render()}
   await loadAll();
-  if(staff()){await sb.rpc('expire_overdue_orders');await loadOrders()}
+  if(staff()){await sb.rpc('expire_overdue_orders');await loadOrders();await loadReqs()}
   S.view=staff()?'orders':'cat';
   subscribe();render();
 }
@@ -156,6 +157,7 @@ async function loadAll(){
   if(S.profile.client_id){const c=await sb.from('clients').select('*').eq('id',S.profile.client_id).maybeSingle();S.client=c.data}
   await loadOrders();
 }
+async function loadReqs(){const r=await sb.from('access_requests').select('*').order('created_at',{ascending:false}).limit(100);S.reqs=r.data||[];await loadClients()}
 async function loadOrders(){
   const r=await sb.from('orders').select('*, clients(name), order_items(*)').order('created_at',{ascending:false}).limit(300);
   S.orders=r.data||[];
@@ -163,7 +165,7 @@ async function loadOrders(){
 let chan=null;
 function subscribe(){
   if(chan)sb.removeChannel(chan);
-  chan=sb.channel('galway').on('postgres_changes',{event:'INSERT',schema:'public',table:'notifications',filter:'user_id=eq.'+S.user.id},p=>{S.notifs.unshift(p.new);toast(p.new.title+(p.new.body?': '+p.new.body:''));run(async()=>{await loadOrders();render()})})
+  chan=sb.channel('galway').on('postgres_changes',{event:'INSERT',schema:'public',table:'notifications',filter:'user_id=eq.'+S.user.id},p=>{S.notifs.unshift(p.new);toast(p.new.title+(p.new.body?': '+p.new.body:''));run(async()=>{await loadOrders();if(staff())await loadReqs();render()})})
    .on('postgres_changes',{event:'*',schema:'public',table:'orders'},()=>run(async()=>{await loadOrders();if(!S.sheet)render()})).subscribe();
 }
 const logout=async()=>{if(chan)sb.removeChannel(chan);await sb.auth.signOut();Object.assign(S,{user:null,profile:null,client:null,orders:[],notifs:[],cart:{},cartOrder:[],view:'login',sheet:null});render()};
@@ -171,7 +173,7 @@ const logout=async()=>{if(chan)sb.removeChannel(chan);await sb.auth.signOut();Ob
 /* ---------- Vistas ---------- */
 function head(){
   const who=S.client?S.client.name:(S.profile?(S.profile.full_name||'Equipo Galway'):'Pedidos mayoristas');
-  const tabs=staff()?[['orders','Pedidos',S.orders.filter(o=>o.status==='pending_review').length]].concat(admin()?[['prices','Precios',0],['clients','Clientes',0],['settings','Ajustes',0]]:[])
+  const tabs=staff()?[['orders','Pedidos',S.orders.filter(o=>o.status==='pending_review').length],['reqs','Accesos',S.reqs.filter(x=>x.status==='pending').length]].concat(admin()?[['prices','Precios',0],['clients','Clientes',0],['settings','Ajustes',0]]:[])
     :[['cat','Catálogo',0],['ord','Mis pedidos',S.orders.filter(o=>o.status==='awaiting_client').length]];
   return `<header><div class="hd"><div class="brand"><img src="logo.png" alt="Galway Alimentos"><div class="t"><h1>Galway Alimentos</h1><p>${esc(who)}</p></div>
   <button class="ib" data-a="bell" aria-label="Avisos">Avisos${unread()?`<span class="dot">${unread()}</span>`:''}</button><button class="ib" data-a="out">Salir</button></div>
@@ -277,15 +279,26 @@ function cartSheet(){
   <label for="fa">¿Necesitás factura?</label><select id="fa"><option value="none"${S.inv==='none'?' selected':''}>No, solo remito (sin IVA)</option><option value="A"${S.inv==='A'?' selected':''}>Factura A (suma IVA)</option><option value="B"${S.inv==='B'?' selected':''}>Factura B (suma IVA)</option></select><div id="ctot" style="margin-top:10px">${cartTot(ls)}</div><label for="nt">Aclaraciones</label><textarea id="nt" rows="2" placeholder="Ej.: entregar por la mañana">${esc(S.note)}</textarea>
   <div class="acts"><button class="btn" data-a="send" ${good?'':'disabled'}>Enviar pedido</button><button class="btn alt" data-a="close2">Seguir agregando</button></div></div></div>`}
 function authView(){
-  if(S.view==='login')return `<div class="login"><img src="logo.png" alt="Galway Alimentos"><h2>Pedidos mayoristas</h2><p class="tag" style="text-align:center;margin:0 0 6px">Ingresá con tu usuario</p><label for="em">Email</label><input id="em" type="email" autocomplete="username" inputmode="email"><label for="pw">Contraseña</label><input id="pw" type="password" autocomplete="current-password">${S.err?`<p class="err">${esc(S.err)}</p>`:''}<button class="btn" data-a="login">Ingresar</button><button class="lnk" data-a="forgot">Olvidé mi contraseña</button></div>`;
+  if(S.view==='login')return `<div class="login"><img src="logo.png" alt="Galway Alimentos"><h2>Pedidos mayoristas</h2><p class="tag" style="text-align:center;margin:0 0 6px">Ingresá con tu usuario</p><label for="em">Email</label><input id="em" type="email" autocomplete="username" inputmode="email"><label for="pw">Contraseña</label><input id="pw" type="password" autocomplete="current-password">${S.err?`<p class="err">${esc(S.err)}</p>`:''}<button class="btn" data-a="login">Ingresar</button><button class="lnk" data-a="forgot">Olvidé mi contraseña</button><hr style="border:0;border-top:1px solid #ddd;margin:14px 0"><p class="tag" style="text-align:center;margin:0">¿Sos cliente y todavía no tenés usuario?</p><button class="btn alt" data-a="gosignup">Crear mi cuenta</button></div>`;
+  if(S.view==='signup')return `<div class="login"><img src="logo.png" alt="Galway Alimentos"><h2>Crear mi cuenta</h2><p class="tag" style="text-align:center;margin:0 0 6px">Completá tus datos. Nuestro equipo los revisa y te habilita el acceso.</p><label for="sn">Nombre y apellido / Razón social</label><input id="sn" autocomplete="organization" value="${esc(S.su.name||'')}"><label for="st">DNI / CUIT (solo números)</label><input id="st" inputmode="numeric" value="${esc(S.su.tax||'')}"><label for="sp">Teléfono / WhatsApp</label><input id="sp" type="tel" autocomplete="tel" value="${esc(S.su.phone||'')}"><label for="sa">Domicilio</label><input id="sa" autocomplete="street-address" value="${esc(S.su.address||'')}"><label for="sz">Código postal</label><input id="sz" autocomplete="postal-code" value="${esc(S.su.postal||'')}"><label for="sc">Localidad</label><input id="sc" autocomplete="address-level2" value="${esc(S.su.city||'')}"><label for="sv">Provincia</label><select id="sv"><option value="">Elegí tu provincia</option>${PROVS.map(x=>`<option${S.su.prov===x?' selected':''}>${x}</option>`).join('')}</select><label for="se">Email</label><input id="se" type="email" autocomplete="username" inputmode="email" value="${esc(S.su.em||'')}"><label for="sr">Transporte <span class="tag">(solo clientes del interior)</span></label><input id="sr" placeholder="Ej.: Expreso Oro Negro" value="${esc(S.su.transport||'')}"><label for="s1">Contraseña (mínimo 8 caracteres)</label><input id="s1" type="password" autocomplete="new-password"><label for="s2">Repetí la contraseña</label><input id="s2" type="password" autocomplete="new-password">${S.err?`<p class="err">${esc(S.err)}</p>`:''}<button class="btn" data-a="signup">Enviar solicitud</button><button class="lnk" data-a="golog">Ya tengo usuario</button></div>`;
   if(S.view==='setpw')return `<div class="login"><img src="logo.png" alt="Galway Alimentos"><h2>Elegí tu contraseña</h2><label for="p1">Contraseña nueva (mínimo 8 caracteres)</label><input id="p1" type="password" autocomplete="new-password"><label for="p2">Repetila</label><input id="p2" type="password" autocomplete="new-password">${S.err?`<p class="err">${esc(S.err)}</p>`:''}<button class="btn" data-a="setpw">Guardar contraseña</button></div>`;
-  return `<div class="login"><img src="logo.png" alt="Galway Alimentos"><h2>Tu usuario todavía no está habilitado</h2><p class="tag" style="text-align:center">Contactá a Galway Alimentos para que te den acceso.</p><button class="btn" data-a="out">Salir</button></div>`}
+  const q=S.myReq,st=q&&q.status;
+  const msg=st==='pending'?'Recibimos tu solicitud. Estamos verificando tus datos y te habilitamos el acceso a la brevedad. Volvé a entrar más tarde, o tocá “Revisar de nuevo”.':st==='rejected'?'No pudimos habilitar tu acceso con los datos enviados. Contactá a Galway Alimentos.':'Contactá a Galway Alimentos para que te den acceso.';
+  return `<div class="login"><img src="logo.png" alt="Galway Alimentos"><h2>${st==='pending'?'Solicitud en revisión':'Tu usuario todavía no está habilitado'}</h2><p class="tag" style="text-align:center">${msg}</p>${st==='pending'?'<button class="btn" data-a="recheck">Revisar de nuevo</button>':''}<button class="btn alt" data-a="out">Salir</button></div>`}
+function reqsView(){
+  const dg=s=>String(s||'').replace(/\D/g,'');
+  const pend=S.reqs.filter(x=>x.status==='pending'),done=S.reqs.filter(x=>x.status!=='pending').slice(0,10);
+  const card=x=>{const m=S.clients.filter(c=>dg(c.tax_id)===x.tax_id),linked=m.length&&m.some(c=>S.links[c.id]);
+    return `<div class="card" style="margin-bottom:10px"><b>${esc(x.name)}</b><br><span class="tag">CUIT/DNI ${esc(x.tax_id)} · ${esc(x.email||'')} · ${esc(x.phone||'sin teléfono')}</span><br><span class="tag">${esc(x.address||'')}, ${esc(x.city||'')} (CP ${esc(x.postal_code||'')}), ${esc(x.province||'')}${x.transport?' · Transporte: '+esc(x.transport):''}</span><br><span class="tag">${new Date(x.created_at).toLocaleString('es-AR')}</span>
+    ${m.length?`<p style="margin:8px 0 4px">Coincide con el cliente <b>${esc(m[0].name)}</b>${linked?' (ya tiene otro usuario con acceso)':''}.</p><div class="acts"><button class="btn" data-a="appr" data-id="${x.id}" data-c="${m[0].id}">Aprobar y vincular</button><button class="btn alt" data-a="rej" data-id="${x.id}">Rechazar</button></div>`
+    :`<p style="margin:8px 0 4px">No hay ningún cliente con ese CUIT/DNI.</p>${admin()?`<label for="nn${x.id}">Nombre del cliente (igual que en Alegra)</label><input id="nn${x.id}" value="${esc(x.name)}"><div class="acts"><button class="btn" data-a="apprnew" data-id="${x.id}">Crear cliente y aprobar</button><button class="btn alt" data-a="rej" data-id="${x.id}">Rechazar</button></div>`:`<p class="tag">Pedile al administrador que lo cree y lo apruebe.</p><div class="acts"><button class="btn alt" data-a="rej" data-id="${x.id}">Rechazar</button></div>`}`}</div>`};
+  return `<h3 style="margin:0 0 8px">Solicitudes de acceso (${pend.length})</h3>${pend.length?pend.map(card).join(''):'<p class="empty">No hay solicitudes pendientes.</p>'}${done.length?`<div class="card scroll"><h3 style="margin:0 0 6px">Últimas resueltas</h3><table>${done.map(x=>`<tr><td>${esc(x.name)}</td><td>${x.status==='approved'?'Aprobada':'Rechazada'}</td></tr>`).join('')}</table></div>`:''}`}
 function render(){
   const app=$('#app');
   if(['boot'].includes(S.view)){app.innerHTML='<p class="empty">Cargando…</p>';return}
-  if(['login','setpw','noaccess'].includes(S.view)){app.innerHTML=authView();$('#sheet').innerHTML='';return}
+  if(['login','signup','setpw','noaccess'].includes(S.view)){app.innerHTML=authView();$('#sheet').innerHTML='';return}
   let m='';
-  if(S.view==='cat')m=catView();else if(S.view==='ord')m=ordView();else if(S.view==='orders')m=staffOrders();
+  if(S.view==='cat')m=catView();else if(S.view==='ord')m=ordView();else if(S.view==='orders')m=staffOrders();else if(S.view==='reqs')m=reqsView();
   else if(S.view==='prices')m=pricesView();else if(S.view==='clients')m=clientsView();else if(S.view==='settings')m=settingsView();
   else if(S.view==='ok')m=`<div class="center"><h2>Pedido #${S.lastId} enviado</h2><p>Lo recibimos y lo vamos a revisar. Te avisamos cuando esté confirmado.</p><div class="acts" style="justify-content:center"><button class="btn" data-a="v" data-v="ord">Ver mis pedidos</button><button class="btn alt" data-a="v" data-v="cat">Hacer otro pedido</button></div></div>`;
   app.innerHTML=head()+`<main>${m}</main>`+bar();
@@ -360,7 +373,7 @@ document.addEventListener('click',e=>{
   const t=e.target.closest('[data-a]');if(!t||t.tagName==='INPUT'||t.tagName==='SELECT')return;const a=t.dataset.a;
   if(a==='close'&&e.target!==t)return;
   run(async()=>{
-    if(a==='v'){S.view=t.dataset.v;S.sheet=null;if(S.view==='clients')await loadClients();if(S.view==='prices')S.prev=null;render();window.scrollTo(0,0)}
+    if(a==='v'){S.view=t.dataset.v;S.sheet=null;if(S.view==='clients')await loadClients();if(S.view==='reqs')await loadReqs();if(S.view==='prices')S.prev=null;render();window.scrollTo(0,0)}
     else if(a==='c'){S.cat=t.dataset.c;render()}
     else if(a==='tab'){S.tab=t.dataset.t;render()}
     else if(a==='p'||a==='m'){const p=S.products.find(x=>x.code===t.dataset.c);setQty(p.code,r2((S.cart[p.code]||0)+(a==='p'?Number(p.multiple):-Number(p.multiple))));refreshCat()}
@@ -374,6 +387,19 @@ document.addEventListener('click',e=>{
     else if(a==='hideinst'){try{localStorage.setItem('gw_inst','1')}catch(x){}render()}
     else if(a==='out')await logout();
     else if(a==='login'){S.err='';const{error}=await sb.auth.signInWithPassword({email:$('#em').value.trim(),password:$('#pw').value});if(error){S.err='Email o contraseña incorrectos.';render();return}S.user=(await sb.auth.getUser()).data.user;await enter()}
+    else if(a==='gosignup'){S.err='';S.view='signup';render()}
+    else if(a==='golog'){S.err='';S.view='login';render()}
+    else if(a==='recheck'){await enter()}
+    else if(a==='signup'){S.err='';const v=id=>$('#'+id).value.trim(),name=v('sn'),tax=v('st').replace(/\D/g,''),em=v('se'),pw=$('#s1').value;const ad=v('sa'),zp=v('sz'),ci=v('sc'),pv=$('#sv').value,tr=v('sr');S.su={name,tax,phone:v('sp'),address:ad,postal:zp,city:ci,prov:pv,transport:tr,em};
+      const bad=!name?'Escribí tu nombre o razón social.':!/^\d{7,11}$/.test(tax)?'El CUIT/DNI debe tener entre 7 y 11 números.':!ad?'Escribí tu domicilio.':!zp?'Escribí el código postal.':!ci?'Escribí la localidad.':!pv?'Elegí la provincia.':!/^\S+@\S+\.\S+$/.test(em)?'Revisá el email.':pw.length<8?'La contraseña debe tener al menos 8 caracteres.':pw!==$('#s2').value?'Las contraseñas no coinciden.':'';
+      if(bad){S.err=bad;render();return}
+      const{data,error}=await sb.auth.signUp({email:em,password:pw});
+      if(error){S.err=/registered|exists/i.test(error.message)?'Ese email ya tiene usuario. Ingresá con tu contraseña o usá “Olvidé mi contraseña”.':error.message;render();return}
+      if(!data.session||(data.user&&data.user.identities&&!data.user.identities.length)){S.err='Si el email es nuevo, te enviamos un link para confirmarlo. Si ya tenías usuario, ingresá con tu contraseña.';render();return}
+      S.user=data.user;await ok(sb.rpc('request_access',{p_name:name,p_tax_id:tax,p_phone:v('sp'),p_address:ad,p_postal:zp,p_city:ci,p_province:pv,p_transport:tr}));await enter()}
+    else if(a==='appr'||a==='apprnew'){const nm=a==='apprnew'?$('#nn'+t.dataset.id).value.trim():null;t.disabled=true;
+      await ok(sb.rpc('approve_request',{p_request:Number(t.dataset.id),p_client:a==='appr'?t.dataset.c:null,p_new_name:nm}));await loadReqs();await loadClients();render();toast('Acceso aprobado.')}
+    else if(a==='rej'){if(!confirm('¿Rechazar esta solicitud?'))return;await ok(sb.rpc('reject_request',{p_request:Number(t.dataset.id)}));await loadReqs();render();toast('Solicitud rechazada.')}
     else if(a==='forgot'){const em=$('#em').value.trim();if(!em)return toast('Escribí tu email y volvé a tocar “Olvidé mi contraseña”.');await sb.auth.resetPasswordForEmail(em,{redirectTo:location.origin+'/'});toast('Si el email existe, te enviamos un link para elegir una contraseña nueva.')}
     else if(a==='setpw'){const p1=$('#p1').value,p2=$('#p2').value;if(p1.length<8){S.err='La contraseña debe tener al menos 8 caracteres.';return render()}if(p1!==p2){S.err='Las contraseñas no coinciden.';return render()}
       const{error}=await sb.auth.updateUser({password:p1});if(error){S.err=error.message;return render()}S.err='';history.replaceState(null,'',location.pathname);S.user=(await sb.auth.getUser()).data.user;await enter();toast('Contraseña guardada.')}
