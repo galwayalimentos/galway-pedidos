@@ -38,6 +38,10 @@ label{display:block;font-size:14px;font-weight:500;margin:12px 0 4px}
 .chips button{flex:none;border:1px solid var(--line);background:var(--sf);color:var(--ink);border-radius:20px;padding:6px 14px;font:inherit;font-size:14px;cursor:pointer}
 .chips button[aria-pressed="true"]{background:var(--hd);color:#fff;border-color:var(--hd)}
 .prod{display:flex;gap:12px;align-items:center;background:var(--sf);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:10px}
+.ph img{width:100%;height:100%;object-fit:cover;border-radius:8px;display:block;cursor:zoom-in}
+.ph.has{background:#222;width:64px;height:64px}
+.zoom{position:fixed;inset:0;background:rgba(0,0,0,.88);display:grid;place-items:center;z-index:50;padding:16px;cursor:zoom-out}.zoom figure{margin:0;text-align:center;color:#fff}.zoom img{max-width:100%;max-height:78vh;border-radius:10px}
+.pr{display:flex;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}.pr .th{flex:none;width:48px;height:48px;border-radius:8px;background:var(--tqs);display:grid;place-items:center;font-weight:700;overflow:hidden}.pr .th img{width:100%;height:100%;object-fit:cover}.pr .nm{flex:1;min-width:0;font-size:14px}.pr .ab{display:flex;gap:6px;flex-wrap:wrap}.fbtn{display:inline-block;padding:8px 12px;border-radius:8px;border:1px solid var(--line);cursor:pointer;font-size:13px;font-weight:600}.fbtn input{display:none}
 .ph{flex:none;width:52px;height:52px;border-radius:8px;background:var(--tqs);display:grid;place-items:center;font-weight:700;font-size:20px}
 .pi{flex:1;min-width:0}
 .pi b{display:block;text-transform:capitalize}
@@ -134,6 +138,24 @@ const isIOS=()=>/iphone|ipad|ipod/i.test(navigator.userAgent);
 function installBtn(){
   if(isStandalone())return '';
   return `<button class="btn alt" data-a="install" style="margin-top:8px">Instalar la app en mi celular</button>${S.instHelp?`<p class="tag" style="text-align:left;margin:8px 0 0">${isIOS()?'En iPhone: tocá el botón <b>Compartir</b> (el cuadrado con la flecha hacia arriba) y elegí <b>Agregar a inicio</b>. Tiene que ser desde Safari.':'Abrí el menú del navegador (los tres puntitos) y elegí <b>Instalar aplicación</b> o <b>Agregar a la pantalla principal</b>.'}</p>`:''}`}
+const imgUrl=p=>p&&p.image_path?CFG.url+'/storage/v1/object/public/product-images/'+p.image_path.split('/').map(encodeURIComponent).join('/'):'';
+async function shrink(file,max=800){
+  const bmp=await createImageBitmap(file).catch(()=>null);if(!bmp)throw new Error('No pude leer esa imagen. Probá con otra foto (JPG o PNG).');
+  const k=Math.min(1,max/Math.max(bmp.width,bmp.height)),w=Math.round(bmp.width*k),h=Math.round(bmp.height*k);
+  const c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,w,h);x.drawImage(bmp,0,0,w,h);
+  return await new Promise((res,rej)=>c.toBlob(b=>b?res(b):rej(new Error('No pude procesar la foto.')),'image/jpeg',0.82))}
+async function setPhoto(code,file){
+  const p=S.products.find(x=>x.code===code);if(!p)return;
+  const blob=await shrink(file),path=code.replace(/[^a-zA-Z0-9_-]/g,'_')+'-'+Date.now()+'.jpg';
+  const up=await sb.storage.from('product-images').upload(path,blob,{contentType:'image/jpeg'});if(up.error)throw up.error;
+  const old=p.image_path;await ok(sb.from('products').update({image_path:path}).eq('code',code));p.image_path=path;
+  if(old)sb.storage.from('product-images').remove([old])}
+async function clearPhoto(code){
+  const p=S.products.find(x=>x.code===code);if(!p||!p.image_path)return;const old=p.image_path;
+  await ok(sb.from('products').update({image_path:null}).eq('code',code));p.image_path=null;sb.storage.from('product-images').remove([old])}
+function photoRows(){
+  const s=(S.phq||'').trim().toLowerCase(),r=S.products.filter(p=>(!s||p.name.toLowerCase().includes(s))&&(!S.phNo||!p.image_path));
+  return r.length?r.map(p=>`<div class="pr"><div class="th">${p.image_path?`<img src="${esc(imgUrl(p))}" alt="" loading="lazy">`:esc((p.name[0]||'?').toUpperCase())}</div><div class="nm">${esc(p.name)}${p.active?'':' <small class="tag">(oculto)</small>'}</div><div class="ab"><label class="fbtn">${p.image_path?'Cambiar':'Subir foto'}<input type="file" accept="image/*" data-img="${esc(p.code)}"></label>${p.image_path?`<button class="fbtn" style="background:none;color:inherit" data-a="rmimg" data-c="${esc(p.code)}">Quitar</button>`:''}</div></div>`).join(''):'<p class="tag">No hay productos para mostrar.</p>'}
 const PROVS=["Buenos Aires", "CABA", "Catamarca", "Chaco", "Chubut", "Córdoba", "Corrientes", "Entre Ríos", "Formosa", "Jujuy", "La Pampa", "La Rioja", "Mendoza", "Misiones", "Neuquén", "Río Negro", "Salta", "San Juan", "San Luis", "Santa Cruz", "Santa Fe", "Santiago del Estero", "Tierra del Fuego", "Tucumán"];
 const IVA=()=>Number(S.settings.iva_rate)||0.21;
 const calc=(ls,inv)=>{const sub=ls.reduce((a,l)=>a+l.p*l.q,0);const iva=inv==='none'?0:sub*IVA();return{sub,iva,tot:sub+iva}};
@@ -198,7 +220,7 @@ function catView(){
 function listHTML(){
   const s=S.q.trim().toLowerCase();
   const r=S.products.filter(p=>p.active&&(S.cat==='Todos'||p.category===S.cat)&&(!s||p.name.toLowerCase().includes(s)));
-  return r.length?r.map(p=>{const n=S.cart[p.code]||0;return `<article class="prod"><div class="ph" aria-hidden="true">${esc(p.name[0]||'?').toUpperCase()}</div><div class="pi"><b>${esc(p.name)}</b><span>${fmt(p.price_per_kg)} por ${unitOf(p)==='unidad'?'unidad':'kg'}</span><small>${p.multiple!=1?`Se pide de a ${qTxt(p.multiple,unitOf(p))} · ${fmt(p.price_per_kg*p.multiple)} cada ${qTxt(p.multiple,unitOf(p))}`:`Se pide por ${unitOf(p)==='unidad'?'unidad':'kg'}`}</small></div><div class="step"><button data-a="m" data-c="${esc(p.code)}" aria-label="Quitar ${qTxt(p.multiple,unitOf(p))} de ${esc(p.name)}" ${n?'':'disabled'}>−</button><input data-a="qty" data-c="${esc(p.code)}" inputmode="decimal" value="${kg(n)}" aria-label="Cantidad de ${esc(p.name)}"><button class="pl" data-a="p" data-c="${esc(p.code)}" aria-label="Agregar ${qTxt(p.multiple,unitOf(p))} de ${esc(p.name)}">+</button></div></article>`}).join(''):'<p class="empty">No hay productos para mostrar.</p>'}
+  return r.length?r.map(p=>{const n=S.cart[p.code]||0;return `<article class="prod">${p.image_path?`<div class="ph has"><img src="${esc(imgUrl(p))}" alt="${esc(p.name)}" loading="lazy" data-a="zoom" data-c="${esc(p.code)}"></div>`:`<div class="ph" aria-hidden="true">${esc(p.name[0]||'?').toUpperCase()}</div>`}<div class="pi"><b>${esc(p.name)}</b><span>${fmt(p.price_per_kg)} por ${unitOf(p)==='unidad'?'unidad':'kg'}</span><small>${p.multiple!=1?`Se pide de a ${qTxt(p.multiple,unitOf(p))} · ${fmt(p.price_per_kg*p.multiple)} cada ${qTxt(p.multiple,unitOf(p))}`:`Se pide por ${unitOf(p)==='unidad'?'unidad':'kg'}`}</small></div><div class="step"><button data-a="m" data-c="${esc(p.code)}" aria-label="Quitar ${qTxt(p.multiple,unitOf(p))} de ${esc(p.name)}" ${n?'':'disabled'}>−</button><input data-a="qty" data-c="${esc(p.code)}" inputmode="decimal" value="${kg(n)}" aria-label="Cantidad de ${esc(p.name)}"><button class="pl" data-a="p" data-c="${esc(p.code)}" aria-label="Agregar ${qTxt(p.multiple,unitOf(p))} de ${esc(p.name)}">+</button></div></article>`}).join(''):'<p class="empty">No hay productos para mostrar.</p>'}
 const cartCodes=()=>{const o=S.cartOrder.filter(c=>S.cart[c]);Object.keys(S.cart).forEach(c=>{if(!o.includes(c))o.push(c)});S.cartOrder=o;return o};
 const cartLines=()=>cartCodes().map(code=>{const p=S.products.find(x=>x.code===code),q=S.cart[code];return p?{code,n:p.name,p:Number(p.price_per_kg),q,u:unitOf(p),m:Number(p.multiple)}:null}).filter(Boolean);
 function bar(){const ls=cartLines(),n=qSum(ls);return(S.view==='cat'&&n)?`<div class="bar"><div><span><b>${n}</b> · ${fmt(calc(ls,'none').sub)} sin IVA</span><button class="btn" data-a="open">Ver pedido</button></div></div>`:''}
@@ -261,6 +283,7 @@ function pricesView(){
   if(p){h+=`<div class="card"><h3 style="margin:0 0 6px">Vista previa</h3><p>${p.nuevos} nuevos · ${p.cambian} con cambios · ${p.iguales} sin cambios</p>`+p.errors.map(e=>`<p class="err">${esc(e)}</p>`).join('')+p.warns.map(e=>`<p class="warn">${esc(e)}</p>`).join('')+
     (p.show.length?`<div class="scroll"><table><tr><th>Producto</th><th class="r">Antes</th><th class="r">Ahora</th><th class="r">Cambio</th></tr>${p.show.map(r=>`<tr><td>${esc(r.name)}${r.isNew?' <small class="tag">(nuevo)</small>':''}${r.active?'':' <small class="tag">(oculto)</small>'}${r.notes.length?` <small class="tag">(${esc(r.notes.join(', '))})</small>`:''}</td><td class="r">${r.old==null?'—':fmt(r.old)}</td><td class="r">${fmt(r.price)}</td><td class="r">${r.pct==null?'':(r.pct>0?'+':'')+r.pct.toFixed(1)+'%'}</td></tr>`).join('')}</table></div>`:'<p class="tag">No hay precios nuevos ni modificados.</p>')+
     `<div class="acts"><button class="btn" data-a="applyprices" ${p.errors.length?'disabled':''}>Aplicar cambios</button><button class="btn alt" data-a="cancelprev">Cancelar</button></div></div>`}
+  h+=`<div class="card"><h3 style="margin:0 0 4px">Fotos de productos</h3><p class="tag">Una foto por producto. Se achica sola para que cargue rápido. Desde el celular podés sacarla en el momento o elegirla de la galería.</p><input id="phq" type="search" placeholder="Buscar producto" aria-label="Buscar producto" value="${esc(S.phq||'')}"><label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="phno"${S.phNo?' checked':''} style="width:auto"> Mostrar solo los que no tienen foto</label><p class="tag" style="margin:0">${S.products.filter(x=>x.image_path).length} de ${S.products.length} con foto</p><div id="phlist">${photoRows()}</div></div>`;
   return h+`<p class="tag">${S.products.length} productos cargados, ${S.products.filter(x=>x.active).length} visibles para clientes.</p>`}
 function clientsView(){
   return `<div class="card"><h3 style="margin:0 0 6px">Cargar clientes desde Excel</h3><p class="tag">Usá la plantilla de clientes. Si el CUIT o DNI ya existe, se actualizan sus datos.</p><input id="cf" type="file" accept=".xlsx,.xls" aria-label="Archivo de clientes"></div>
@@ -395,6 +418,8 @@ document.addEventListener('click',e=>{
     else if(a==='hideinst'){try{localStorage.setItem('gw_inst','1')}catch(x){}render()}
     else if(a==='out')await logout();
     else if(a==='login'){S.err='';const{error}=await sb.auth.signInWithPassword({email:$('#em').value.trim(),password:$('#pw').value});if(error){S.err='Email o contraseña incorrectos.';render();return}S.user=(await sb.auth.getUser()).data.user;await enter()}
+    else if(a==='zoom'){const p=S.products.find(x=>x.code===t.dataset.c);if(!p)return;const z=document.createElement('div');z.className='zoom';z.innerHTML=`<figure><img src="${esc(imgUrl(p))}" alt="${esc(p.name)}"><figcaption style="margin-top:8px">${esc(p.name)}</figcaption></figure>`;z.onclick=()=>z.remove();document.body.appendChild(z)}
+    else if(a==='rmimg'){if(!confirm('¿Quitar la foto de este producto?'))return;await clearPhoto(t.dataset.c);const l=$('#phlist');if(l)l.innerHTML=photoRows();toast('Foto quitada.')}
     else if(a==='install'){if(installEv){const ev=installEv;installEv=null;ev.prompt();await ev.userChoice;render()}else{S.instHelp=true;render()}}
     else if(a==='gosignup'){S.err='';S.view='signup';render()}
     else if(a==='golog'){S.err='';S.view='login';render()}
@@ -438,11 +463,13 @@ document.addEventListener('click',e=>{
       const pr=await sb.from('products').select('*').order('category').order('name');S.products=pr.data||[];S.prev=null;render();toast(`Listo: ${r.nuevos} nuevos, ${r.precios_cambiados} precios actualizados.`)}
     else if(a==='dlprices'){const ws=XLSX.utils.aoa_to_sheet([['Código (único, no cambiar)','Nombre (igual que en Alegra)','Categoría','Precio por kg o unidad (sin IVA)','Múltiplo','Activo','Código Alegra (opcional)','Unidad (kg o unidad)']].concat(S.products.map(p=>[p.code,p.name,p.category,Number(p.price_per_kg),Number(p.multiple),p.active?'Sí':'No',p.alegra_code||'',unitOf(p)])));const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Precios');XLSX.writeFile(wb,'precios_actuales.xlsx')}
   })});
-document.addEventListener('input',e=>{if(e.target.id==='q'){S.q=e.target.value;$('#list').innerHTML=listHTML()}else if(e.target.id==='nt'){S.note=e.target.value}});
+document.addEventListener('input',e=>{if(e.target.id==='q'){S.q=e.target.value;$('#list').innerHTML=listHTML()}else if(e.target.id==='nt'){S.note=e.target.value}else if(e.target.id==='phq'){S.phq=e.target.value;$('#phlist').innerHTML=photoRows()}});
 document.addEventListener('change',e=>{const t=e.target;run(async()=>{
   if(t.dataset.a==='qty'){const c=t.dataset.c;setQty(c,pn(t.value));const n=S.cart[c]||0;t.value=kg(n);const m=document.querySelector('#list [data-a="m"][data-c="'+CSS.escape(c)+'"]');if(m)m.disabled=!n;refreshBar()}
   else if(t.dataset.a==='cqty'){setQty(t.dataset.c,pn(t.value));cartPatch();refreshCat()}
   else if(t.id==='fa'){S.inv=t.value;cartPatch()}
+  else if(t.id==='phno'){S.phNo=t.checked;$('#phlist').innerHTML=photoRows()}
+  else if(t.dataset.img&&t.files[0]){const f=t.files[0];t.value='';toast('Subiendo foto…');await setPhoto(t.dataset.img,f);toast('Foto guardada.');const l=$('#phlist');if(l)l.innerHTML=photoRows()}
   else if(t.id==='pf'&&t.files[0])await previewPrices(t.files[0]);
   else if(t.id==='cf'&&t.files[0]){await importClients(t.files[0]);t.value=''}})});
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.target.id==='pw'||e.target.id==='em')){const b=document.querySelector('[data-a="login"]');if(b)b.click()}});
