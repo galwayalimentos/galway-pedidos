@@ -111,6 +111,11 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const r2=x=>Math.round(x*100)/100;
 const kg=n=>Number(n).toLocaleString('es-AR',{maximumFractionDigits:2,useGrouping:false});
 const pn=s=>parseFloat(String(s).replace(',','.'))||0;
+const inferUnit=n=>/\d\s*(gramos|grs|gr|g)(?![a-záéíóú0-9])/i.test(String(n||''))?'unidad':'kg';
+const unitOf=x=>(x&&x.unit)||'kg';
+const uTxt=(q,u)=>u==='unidad'?(Number(q)===1?'unidad':'unidades'):'kg';
+const qTxt=(q,u)=>kg(q)+' '+uTxt(q,u);
+const qSum=ls=>{const k=r2(ls.filter(l=>l.u!=='unidad').reduce((a,l)=>a+Number(l.q),0)),n=r2(ls.filter(l=>l.u==='unidad').reduce((a,l)=>a+Number(l.q),0));return [k?kg(k)+' kg':'',n?kg(n)+' '+uTxt(n,'unidad'):''].filter(Boolean).join(' + ')};
 const dt=s=>new Date(s).toLocaleString('es-AR',{dateStyle:'short',timeStyle:'short'});
 const ST={pending_review:'Pendiente de revisión',awaiting_client:'Esperando confirmación',confirmed:'Confirmado',preparing:'En armado',shipped:'Enviado',delivered:'Entregado',rejected:'Rechazado',expired:'Vencido'};
 const NEXT={confirmed:'preparing',preparing:'shipped',shipped:'delivered'};
@@ -178,13 +183,13 @@ function installNote(){
   return `<div class="note">${ios?'Para recibir avisos en tu iPhone: tocá Compartir y elegí “Agregar a inicio”.':'Podés instalar esta app: abrí el menú del navegador y elegí “Instalar app” o “Agregar a pantalla de inicio”.'} <button class="lnk" style="width:auto;margin:0 0 0 6px" data-a="hideinst">Ocultar</button></div>`}
 function catView(){
   const cats=['Todos',...new Set(S.products.filter(p=>p.active).map(p=>p.category))];
-  return `${installNote()}<p class="note">Los precios son por kilo y no incluyen IVA.</p><input id="q" type="search" placeholder="Buscar producto" aria-label="Buscar producto" value="${esc(S.q)}"><div class="chips">${cats.map(c=>`<button data-a="c" data-c="${esc(c)}" aria-pressed="${S.cat===c}">${esc(c)}</button>`).join('')}</div><div id="list"></div>`}
+  return `${installNote()}<p class="note">Los precios son por kilo, o por unidad en los productos que lo indican, y no incluyen IVA.</p><input id="q" type="search" placeholder="Buscar producto" aria-label="Buscar producto" value="${esc(S.q)}"><div class="chips">${cats.map(c=>`<button data-a="c" data-c="${esc(c)}" aria-pressed="${S.cat===c}">${esc(c)}</button>`).join('')}</div><div id="list"></div>`}
 function listHTML(){
   const s=S.q.trim().toLowerCase();
   const r=S.products.filter(p=>p.active&&(S.cat==='Todos'||p.category===S.cat)&&(!s||p.name.toLowerCase().includes(s)));
-  return r.length?r.map(p=>{const n=S.cart[p.code]||0;return `<article class="prod"><div class="ph" aria-hidden="true">${esc(p.name[0]||'?').toUpperCase()}</div><div class="pi"><b>${esc(p.name)}</b><span>${fmt(p.price_per_kg)} por kg</span><small>${p.multiple!=1?`Se pide de a ${kg(p.multiple)} kg · ${fmt(p.price_per_kg*p.multiple)} cada ${kg(p.multiple)} kg`:'Se pide por kg'}</small></div><div class="step"><button data-a="m" data-c="${esc(p.code)}" aria-label="Quitar ${kg(p.multiple)} kg de ${esc(p.name)}" ${n?'':'disabled'}>−</button><input data-a="qty" data-c="${esc(p.code)}" inputmode="decimal" value="${kg(n)}" aria-label="Kilos de ${esc(p.name)}"><button class="pl" data-a="p" data-c="${esc(p.code)}" aria-label="Agregar ${kg(p.multiple)} kg de ${esc(p.name)}">+</button></div></article>`}).join(''):'<p class="empty">No hay productos para mostrar.</p>'}
-const cartLines=()=>Object.entries(S.cart).map(([code,q])=>{const p=S.products.find(x=>x.code===code);return p?{code,n:p.name,p:Number(p.price_per_kg),q}:null}).filter(Boolean);
-function bar(){const ls=cartLines(),n=r2(ls.reduce((a,l)=>a+l.q,0));return(S.view==='cat'&&n)?`<div class="bar"><div><span><b>${kg(n)} kg</b> · ${fmt(calc(ls,'none').sub)} sin IVA</span><button class="btn" data-a="open">Ver pedido</button></div></div>`:''}
+  return r.length?r.map(p=>{const n=S.cart[p.code]||0;return `<article class="prod"><div class="ph" aria-hidden="true">${esc(p.name[0]||'?').toUpperCase()}</div><div class="pi"><b>${esc(p.name)}</b><span>${fmt(p.price_per_kg)} por ${unitOf(p)==='unidad'?'unidad':'kg'}</span><small>${p.multiple!=1?`Se pide de a ${qTxt(p.multiple,unitOf(p))} · ${fmt(p.price_per_kg*p.multiple)} cada ${qTxt(p.multiple,unitOf(p))}`:`Se pide por ${unitOf(p)==='unidad'?'unidad':'kg'}`}</small></div><div class="step"><button data-a="m" data-c="${esc(p.code)}" aria-label="Quitar ${qTxt(p.multiple,unitOf(p))} de ${esc(p.name)}" ${n?'':'disabled'}>−</button><input data-a="qty" data-c="${esc(p.code)}" inputmode="decimal" value="${kg(n)}" aria-label="Cantidad de ${esc(p.name)}"><button class="pl" data-a="p" data-c="${esc(p.code)}" aria-label="Agregar ${qTxt(p.multiple,unitOf(p))} de ${esc(p.name)}">+</button></div></article>`}).join(''):'<p class="empty">No hay productos para mostrar.</p>'}
+const cartLines=()=>Object.entries(S.cart).map(([code,q])=>{const p=S.products.find(x=>x.code===code);return p?{code,n:p.name,p:Number(p.price_per_kg),q,u:unitOf(p)}:null}).filter(Boolean);
+function bar(){const ls=cartLines(),n=qSum(ls);return(S.view==='cat'&&n)?`<div class="bar"><div><span><b>${n}</b> · ${fmt(calc(ls,'none').sub)} sin IVA</span><button class="btn" data-a="open">Ver pedido</button></div></div>`:''}
 function itemsOf(o){return o.order_items.slice().sort((a,b)=>a.id-b.id)}
 function qOf(o,i){const e=S.edits[o.id];return e&&e[i.id]!==undefined?e[i.id]:i.qty}
 function orderCard(o,isStaff){
@@ -193,7 +198,7 @@ function orderCard(o,isStaff){
   const changed=its.some(i=>qOf(o,i)!==i.original_qty);
   const lines=its.map(i=>{const q=qOf(o,i),rm=q===0;
     const ctl=edit?`<div style="padding:4px 0" class="acts"><button class="btn alt sm" data-a="eq" data-o="${o.id}" data-i="${i.id}" data-d="-1" aria-label="Menos ${esc(i.product_name)}" ${q?'':'disabled'}>−</button><button class="btn alt sm" data-a="eq" data-o="${o.id}" data-i="${i.id}" data-d="1" aria-label="Más ${esc(i.product_name)}" ${q<i.original_qty?'':'disabled'}>+</button><button class="btn alt sm" data-a="ex" data-o="${o.id}" data-i="${i.id}" ${rm?'disabled':''}>Quitar</button></div>`:'';
-    return `<div class="ln ${rm?'rm':''}"><span>${esc(i.product_name)}${q!==i.original_qty&&!rm?' <small class="tag">(cambió)</small>':''}${rm?' <small class="tag">(sin stock)</small>':''}</span><span>${q!==i.original_qty?`<s>${kg(i.original_qty)}</s> `:''}${kg(q)} kg · ${fmt(i.unit_price*q)}</span></div>${ctl}`}).join('');
+    return `<div class="ln ${rm?'rm':''}"><span>${esc(i.product_name)}${q!==i.original_qty&&!rm?' <small class="tag">(cambió)</small>':''}${rm?' <small class="tag">(sin stock)</small>':''}</span><span>${q!==i.original_qty?`<s>${kg(i.original_qty)}</s> `:''}${qTxt(q,unitOf(i))} · ${fmt(i.unit_price*q)}</span></div>${ctl}`}).join('');
   let a='';const wait=!isStaff&&o.status==='awaiting_client';
   const exp=o.expires_at&&new Date(o.expires_at)<new Date();
   if(isStaff){
@@ -247,7 +252,7 @@ function bellSheet(){
   return `<div class="sheet" data-a="close"><div role="dialog" aria-label="Avisos"><h2>Avisos</h2>${S.notifs.length?S.notifs.map(n=>`<div class="nt ${n.read?'':'un'}" data-a="nt" data-o="${n.order_id||''}"><b>${esc(n.title)}</b><div class="tag">${esc(n.body||'')} · ${dt(n.created_at)}</div></div>`).join(''):'<p class="empty">No tenés avisos.</p>'}<div class="acts"><button class="btn alt" data-a="readall">Marcar como leídos</button><button class="btn alt" data-a="close2">Cerrar</button></div></div></div>`}
 function cartSheet(){
   const ls=cartLines(),sub=calc(ls,'none').sub,min=Number(S.settings.min_order)||0,good=sub>=min;
-  return `<div class="sheet" data-a="close"><div role="dialog" aria-label="Tu pedido"><h2>Tu pedido</h2>${ls.map(l=>`<div class="ln"><span>${kg(l.q)} kg · ${esc(l.n)}</span><span>${fmt(l.p*l.q)}</span></div>`).join('')}
+  return `<div class="sheet" data-a="close"><div role="dialog" aria-label="Tu pedido"><h2>Tu pedido</h2>${ls.map(l=>`<div class="ln"><span>${qTxt(l.q,l.u)} · ${esc(l.n)}</span><span>${fmt(l.p*l.q)}</span></div>`).join('')}
   <label for="fa">¿Necesitás factura?</label><select id="fa"><option value="none"${S.inv==='none'?' selected':''}>No, solo remito (sin IVA)</option><option value="A"${S.inv==='A'?' selected':''}>Factura A (suma IVA)</option><option value="B"${S.inv==='B'?' selected':''}>Factura B (suma IVA)</option></select><div style="margin-top:10px">${totals(ls,S.inv)}</div>
   ${good?'':`<p class="warn">El pedido mínimo es ${fmt(min)} sin IVA. Te faltan ${fmt(min-sub)}.</p>`}<label for="nt">Aclaraciones</label><textarea id="nt" rows="2" placeholder="Ej.: entregar por la mañana">${esc(S.note)}</textarea>
   <div class="acts"><button class="btn" data-a="send" ${good&&ls.length?'':'disabled'}>Enviar pedido</button><button class="btn alt" data-a="close2">Seguir agregando</button></div></div></div>`}
@@ -271,7 +276,7 @@ function sheetRender(){$('#sheet').innerHTML=S.sheet==='cart'?cartSheet():S.shee
 function refreshCat(){$('#list').innerHTML=listHTML();const b=$('.bar');const x=document.createElement('div');x.innerHTML=bar();if(b)b.remove();if(x.firstChild)document.body.appendChild(x.firstChild)}
 
 /* ---------- Carrito ---------- */
-function setQty(code,v){const p=S.products.find(x=>x.code===code);const m=Number(p.multiple);v=Math.max(0,r2(Number(v)||0));if(Math.round(v*100)%Math.round(m*100)){const r=r2(Math.round(v/m)*m);toast(`${p.name} se pide de a ${kg(m)} kg. Lo ajustamos a ${kg(r)} kg.`);v=r}if(v)S.cart[code]=v;else delete S.cart[code]}
+function setQty(code,v){const p=S.products.find(x=>x.code===code);const m=Number(p.multiple);v=Math.max(0,r2(Number(v)||0));if(Math.round(v*100)%Math.round(m*100)){const r=r2(Math.round(v/m)*m);toast(`${p.name} se pide de a ${qTxt(m,unitOf(p))}. Lo ajustamos a ${qTxt(r,unitOf(p))}.`);v=r}if(v)S.cart[code]=v;else delete S.cart[code]}
 
 /* ---------- PDF para Alegra (mismo formato que pedido_11.pdf) ---------- */
 function pdfOrder(o){
@@ -284,7 +289,7 @@ function pdfOrder(o){
   d.save(`pedido_${o.id}.pdf`)}
 function printSheet(o){
   const its=itemsOf(o).filter(i=>i.qty>0);
-  $('#printarea').innerHTML=`<h2>Hoja de armado · Pedido #${o.id}</h2><p><b>Cliente:</b> ${esc(o.clients?o.clients.name:'')}<br><b>Fecha:</b> ${dt(o.created_at)}${o.note?`<br><b>Aclaración:</b> ${esc(o.note)}`:''}</p><table><tr><th>Producto</th><th>Kg</th><th>Armado</th></tr>${its.map(i=>`<tr><td>${esc(i.product_name)}</td><td>${kg(i.qty)}</td><td>☐</td></tr>`).join('')}</table><p>Total: ${kg(r2(its.reduce((a,i)=>a+Number(i.qty),0)))} kg</p>`;
+  $('#printarea').innerHTML=`<h2>Hoja de armado · Pedido #${o.id}</h2><p><b>Cliente:</b> ${esc(o.clients?o.clients.name:'')}<br><b>Fecha:</b> ${dt(o.created_at)}${o.note?`<br><b>Aclaración:</b> ${esc(o.note)}`:''}</p><table><tr><th>Producto</th><th>Cantidad</th><th>Armado</th></tr>${its.map(i=>`<tr><td>${esc(i.product_name)}</td><td>${qTxt(i.qty,unitOf(i))}</td><td>☐</td></tr>`).join('')}</table><p>Total: ${qSum(its.map(i=>({q:i.qty,u:unitOf(i)})))}</p>`;
   window.print()}
 
 /* ---------- Excel ---------- */
@@ -304,8 +309,10 @@ async function previewPrices(file){
     const old=cur[code]?Number(cur[code].price_per_kg):null,pct=old?((price-old)/old)*100:null;
     if(pct!==null&&Math.abs(pct)>25)warns.push(`${name}: el precio cambia ${pct.toFixed(0)}%. Verificá que sea correcto.`);
     if(cur[code]&&cur[code].name!==name)warns.push(`El código ${code} cambia de nombre: “${cur[code].name}” pasa a “${name}”.`);
-    const acode=String(r[6]==null?'':r[6]).trim(),c0=cur[code],notes=[];if(c0){if((c0.alegra_code||'')!==acode)notes.push('código Alegra');if(Number(c0.multiple)!==mult)notes.push(`múltiplo ${kg(c0.multiple)} → ${kg(mult)}`);if(c0.active!==yes(r[5]))notes.push(yes(r[5])?'se activa':'se oculta');if(c0.category!==(String(r[2]).trim()||'Otros'))notes.push('cambia la categoría')}
-    out.push({code,name,category:String(r[2]).trim(),price,multiple:mult,active:yes(r[5]),alegra_code:acode,old,pct,isNew:!cur[code],notes})});
+    const acode=String(r[6]==null?'':r[6]).trim(),uRaw=String(r[7]==null?'':r[7]).trim().toLowerCase();
+    if(uRaw&&!/^(kg|kilo|kilos|k|u|un|unidad|unidades)$/.test(uRaw)){errors.push(`Fila ${n} (${name}): la unidad debe ser “kg” o “unidad”.`);return}
+    const unit=uRaw?(/^u/.test(uRaw)?'unidad':'kg'):inferUnit(name),c0=cur[code],notes=[];if(c0){if(unitOf(c0)!==unit)notes.push('se pide por '+unit);if((c0.alegra_code||'')!==acode)notes.push('código Alegra');if(Number(c0.multiple)!==mult)notes.push(`múltiplo ${kg(c0.multiple)} → ${kg(mult)}`);if(c0.active!==yes(r[5]))notes.push(yes(r[5])?'se activa':'se oculta');if(c0.category!==(String(r[2]).trim()||'Otros'))notes.push('cambia la categoría')}
+    out.push({code,name,category:String(r[2]).trim(),price,multiple:mult,active:yes(r[5]),alegra_code:acode,unit,old,pct,isNew:!cur[code],notes})});
   S.products.filter(p=>p.active&&!seenC.has(p.code)).forEach(p=>warns.push(`${p.name} no está en el archivo y sigue visible con su precio anterior.`));
   const ch=out.filter(r=>r.isNew||r.old!==r.price||r.notes.length);
   S.prev={rows:out,errors,warns,show:ch,nuevos:out.filter(r=>r.isNew).length,cambian:out.filter(r=>!r.isNew&&(r.old!==r.price||r.notes.length)).length,iguales:out.filter(r=>!r.isNew&&r.old===r.price&&!r.notes.length).length};
@@ -360,9 +367,9 @@ document.addEventListener('click',e=>{
     else if(a==='savecfg'){const v=[['min_order',Math.max(0,parseInt($('#s1').value,10)||0)],['response_hours',Math.max(1,parseInt($('#s2').value,10)||48)],['whatsapp',$('#s3').value.replace(/\D/g,'')]];
       await ok(sb.from('settings').upsert(v.map(([key,value])=>({key,value}))));v.forEach(([k,x])=>S.settings[k]=x);toast('Ajustes guardados.')}
     else if(a==='cancelprev'){S.prev=null;render()}
-    else if(a==='applyprices'){const r=await ok(sb.rpc('import_prices',{p_rows:S.prev.rows.map(x=>({code:x.code,name:x.name,category:x.category,price:x.price,multiple:x.multiple,active:x.active,alegra_code:x.alegra_code}))}));
+    else if(a==='applyprices'){const r=await ok(sb.rpc('import_prices',{p_rows:S.prev.rows.map(x=>({code:x.code,name:x.name,category:x.category,price:x.price,multiple:x.multiple,active:x.active,alegra_code:x.alegra_code,unit:x.unit}))}));
       const pr=await sb.from('products').select('*').order('category').order('name');S.products=pr.data||[];S.prev=null;render();toast(`Listo: ${r.nuevos} nuevos, ${r.precios_cambiados} precios actualizados.`)}
-    else if(a==='dlprices'){const ws=XLSX.utils.aoa_to_sheet([['Código (único, no cambiar)','Nombre (igual que en Alegra)','Categoría','Precio por kg (sin IVA)','Múltiplo (kg)','Activo','Código Alegra (opcional)']].concat(S.products.map(p=>[p.code,p.name,p.category,Number(p.price_per_kg),Number(p.multiple),p.active?'Sí':'No',p.alegra_code||''])));const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Precios');XLSX.writeFile(wb,'precios_actuales.xlsx')}
+    else if(a==='dlprices'){const ws=XLSX.utils.aoa_to_sheet([['Código (único, no cambiar)','Nombre (igual que en Alegra)','Categoría','Precio por kg o unidad (sin IVA)','Múltiplo','Activo','Código Alegra (opcional)','Unidad (kg o unidad)']].concat(S.products.map(p=>[p.code,p.name,p.category,Number(p.price_per_kg),Number(p.multiple),p.active?'Sí':'No',p.alegra_code||'',unitOf(p)])));const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Precios');XLSX.writeFile(wb,'precios_actuales.xlsx')}
   })});
 document.addEventListener('input',e=>{if(e.target.id==='q'){S.q=e.target.value;$('#list').innerHTML=listHTML()}else if(e.target.id==='nt'){S.note=e.target.value}});
 document.addEventListener('change',e=>{const t=e.target;run(async()=>{
