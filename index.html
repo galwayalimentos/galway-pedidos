@@ -176,7 +176,7 @@ async function enter(){
   S.profile=p.data;
   if(!S.profile){const q=await sb.from('access_requests').select('*').eq('user_id',S.user.id).maybeSingle();S.myReq=q.data;S.view='noaccess';return render()}
   await loadAll();
-  if(staff()){await sb.rpc('expire_overdue_orders');await loadOrders();await loadReqs()}
+  if(staff()){await sb.rpc('expire_overdue_orders');await loadOrders();await loadReqs()}else await loadDraft().catch(()=>{});
   S.view=staff()?'orders':'cat';
   subscribe();render();
 }
@@ -198,7 +198,7 @@ function subscribe(){
   chan=sb.channel('galway').on('postgres_changes',{event:'INSERT',schema:'public',table:'notifications',filter:'user_id=eq.'+S.user.id},p=>{S.notifs.unshift(p.new);toast(p.new.title+(p.new.body?': '+p.new.body:''));run(async()=>{await loadOrders();if(staff())await loadReqs();render()})})
    .on('postgres_changes',{event:'*',schema:'public',table:'orders'},()=>run(async()=>{await loadOrders();if(!S.sheet)render()})).subscribe();
 }
-const logout=async()=>{if(chan)sb.removeChannel(chan);await sb.auth.signOut();Object.assign(S,{user:null,profile:null,client:null,orders:[],notifs:[],cart:{},cartOrder:[],view:'login',sheet:null});render()};
+const logout=async()=>{await saveDraft().catch(()=>{});if(chan)sb.removeChannel(chan);await sb.auth.signOut();Object.assign(S,{user:null,profile:null,client:null,orders:[],notifs:[],cart:{},cartOrder:[],view:'login',sheet:null});render()};
 
 /* ---------- Vistas ---------- */
 function head(){
@@ -214,9 +214,11 @@ function installNote(){
   if(standalone||hide||staff())return '';
   const ios=/iphone|ipad|ipod/i.test(navigator.userAgent);
   return `<div class="note">${installEv?'Instalá esta app en tu celular para entrar más rápido. <button class="lnk" style="width:auto;margin:0 6px" data-a="install">Instalar</button>':''}${installEv?'':ios?'Para recibir avisos en tu iPhone: tocá Compartir y elegí “Agregar a inicio”.':'Podés instalar esta app: abrí el menú del navegador y elegí “Instalar app” o “Agregar a pantalla de inicio”.'} <button class="lnk" style="width:auto;margin:0 0 0 6px" data-a="hideinst">Ocultar</button></div>`}
+function draftNote(){const d=S.draftMsg;if(!d)return '';const ls=cartLines();if(!ls.length)return '';
+  return `<div class="note">Recuperamos tu pedido guardado: <b>${qSum(ls)}</b> · ${fmt(calc(ls,'none').sub)} sin IVA.${d.miss?` ${d.miss} producto(s) ya no están disponibles.`:''}${d.adj?` Ajustamos ${d.adj} cantidad(es) a los múltiplos actuales.`:''} <button class="lnk" style="width:auto;margin:0 0 0 6px" data-a="open">Ver pedido</button><button class="lnk" style="width:auto;margin:0 0 0 6px" data-a="hidedraft">Entendido</button></div>`}
 function catView(){
   const cats=['Todos',...new Set(S.products.filter(p=>p.active).map(p=>p.category))];
-  return `${installNote()}<p class="note">Los precios son por kilo, o por unidad en los productos que lo indican, y no incluyen IVA.</p><input id="q" type="search" placeholder="Buscar producto" aria-label="Buscar producto" value="${esc(S.q)}"><div class="chips">${cats.map(c=>`<button data-a="c" data-c="${esc(c)}" aria-pressed="${S.cat===c}">${esc(c)}</button>`).join('')}</div><div id="list"></div>`}
+  return `${installNote()}${draftNote()}<p class="note">Los precios son por kilo, o por unidad en los productos que lo indican, y no incluyen IVA.</p><input id="q" type="search" placeholder="Buscar producto" aria-label="Buscar producto" value="${esc(S.q)}"><div class="chips">${cats.map(c=>`<button data-a="c" data-c="${esc(c)}" aria-pressed="${S.cat===c}">${esc(c)}</button>`).join('')}</div><div id="list"></div>`}
 function listHTML(){
   const s=S.q.trim().toLowerCase();
   const r=S.products.filter(p=>p.active&&(S.cat==='Todos'||p.category===S.cat)&&(!s||p.name.toLowerCase().includes(s)));
@@ -308,7 +310,7 @@ function cartSheet(){
   const row=l=>`<div class="cl" data-c="${esc(l.code)}"><div class="ln" style="border:0;padding:0 0 4px"><span><b>${esc(l.n)}</b></span><span>${fmt(l.p*l.q)}</span></div><div class="cl-c"><div class="step"><button data-a="cm" data-c="${esc(l.code)}" aria-label="Quitar ${qTxt(l.m,l.u)} de ${esc(l.n)}" ${l.q>l.m?'':'disabled'}>−</button><input data-a="cqty" data-c="${esc(l.code)}" inputmode="decimal" value="${kg(l.q)}" aria-label="Cantidad de ${esc(l.n)}"><button class="pl" data-a="cp" data-c="${esc(l.code)}" aria-label="Agregar ${qTxt(l.m,l.u)} de ${esc(l.n)}">+</button><span class="tag" style="margin-left:6px">${uTxt(l.q,l.u)}</span></div><button class="btn alt sm" data-a="crm" data-c="${esc(l.code)}" aria-label="Quitar ${esc(l.n)} del pedido">Quitar</button></div></div>`;
   return `<div class="sheet" data-a="close"><div role="dialog" aria-label="Tu pedido"><h2>Tu pedido</h2>${ls.map(row).join('')}
   <label for="fa">¿Necesitás factura?</label><select id="fa"><option value="none"${S.inv==='none'?' selected':''}>No, solo remito (sin IVA)</option><option value="A"${S.inv==='A'?' selected':''}>Factura A (suma IVA)</option><option value="B"${S.inv==='B'?' selected':''}>Factura B (suma IVA)</option></select><div id="ctot" style="margin-top:10px">${cartTot(ls)}</div><label for="nt">Aclaraciones</label><textarea id="nt" rows="2" placeholder="Ej.: entregar por la mañana">${esc(S.note)}</textarea>
-  <div class="acts"><button class="btn" data-a="send" ${good?'':'disabled'}>Enviar pedido</button><button class="btn alt" data-a="close2">Seguir agregando</button></div></div></div>`}
+  <div class="acts"><button class="btn" data-a="send" ${good?'':'disabled'}>Enviar pedido</button><button class="btn alt" data-a="close2">Seguir agregando</button></div><button class="lnk" data-a="savedraft">Guardar para continuar más tarde</button></div></div>`}
 function authView(){
   if(S.view==='login')return `<div class="login"><img src="logo.png" alt="Galway Alimentos"><h2>Pedidos mayoristas</h2><p class="tag" style="text-align:center;margin:0 0 6px">Ingresá con tu usuario</p><label for="em">Email</label><input id="em" type="email" autocomplete="username" inputmode="email"><label for="pw">Contraseña</label><input id="pw" type="password" autocomplete="current-password">${S.err?`<p class="err">${esc(S.err)}</p>`:''}<button class="btn" data-a="login">Ingresar</button><button class="lnk" data-a="forgot">Olvidé mi contraseña</button><hr style="border:0;border-top:1px solid #ddd;margin:14px 0"><p class="tag" style="text-align:center;margin:0">¿Sos cliente y todavía no tenés usuario?</p><button class="btn alt" data-a="gosignup">Crear mi cuenta</button>${installBtn()}</div>`;
   if(S.view==='signup')return `<div class="login"><img src="logo.png" alt="Galway Alimentos"><h2>Crear mi cuenta</h2><p class="tag" style="text-align:center;margin:0 0 6px">Completá tus datos. Nuestro equipo los revisa y te habilita el acceso.</p><label for="sn">Nombre y apellido / Razón social</label><input id="sn" autocomplete="organization" value="${esc(S.su.name||'')}"><label for="st">DNI / CUIT (solo números)</label><input id="st" inputmode="numeric" value="${esc(S.su.tax||'')}"><label for="sp">Teléfono / WhatsApp</label><input id="sp" type="tel" autocomplete="tel" value="${esc(S.su.phone||'')}"><label for="sa">Domicilio</label><input id="sa" autocomplete="street-address" value="${esc(S.su.address||'')}"><label for="sz">Código postal</label><input id="sz" autocomplete="postal-code" value="${esc(S.su.postal||'')}"><label for="sc">Localidad</label><input id="sc" autocomplete="address-level2" value="${esc(S.su.city||'')}"><label for="sv">Provincia</label><select id="sv"><option value="">Elegí tu provincia</option>${PROVS.map(x=>`<option${S.su.prov===x?' selected':''}>${x}</option>`).join('')}</select><label for="se">Email</label><input id="se" type="email" autocomplete="username" inputmode="email" value="${esc(S.su.em||'')}"><label for="sr">Transporte <span class="tag">(solo clientes del interior)</span></label><input id="sr" placeholder="Ej.: Expreso Oro Negro" value="${esc(S.su.transport||'')}"><label for="s1">Contraseña (mínimo 8 caracteres)</label><input id="s1" type="password" autocomplete="new-password"><label for="s2">Repetí la contraseña</label><input id="s2" type="password" autocomplete="new-password">${S.err?`<p class="err">${esc(S.err)}</p>`:''}<button class="btn" data-a="signup">Enviar solicitud</button><button class="lnk" data-a="golog">Ya tengo usuario</button></div>`;
@@ -345,7 +347,22 @@ function refreshBar(){
 function refreshCat(){$('#list').innerHTML=listHTML();const b=$('.bar');const x=document.createElement('div');x.innerHTML=bar();if(b)b.remove();if(x.firstChild)document.body.appendChild(x.firstChild)}
 
 /* ---------- Carrito ---------- */
-function setQty(code,v){const p=S.products.find(x=>x.code===code);const m=Number(p.multiple);v=Math.max(0,r2(Number(v)||0));if(Math.round(v*100)%Math.round(m*100)){const r=r2(Math.round(v/m)*m);toast(`${p.name} se pide de a ${qTxt(m,unitOf(p))}. Lo ajustamos a ${qTxt(r,unitOf(p))}.`);v=r}if(v){S.cart[code]=v;if(!S.cartOrder.includes(code))S.cartOrder.push(code)}else{delete S.cart[code];S.cartOrder=S.cartOrder.filter(c=>c!==code)}}
+let draftT=null;
+function saveDraftSoon(){if(!S.profile||S.profile.role!=='client')return;clearTimeout(draftT);draftT=setTimeout(saveDraft,1200)}
+async function saveDraft(){
+  clearTimeout(draftT);if(!S.user||!S.profile||S.profile.role!=='client'||!S.dl)return false;
+  const items=cartLines().map(l=>({code:l.code,qty:l.q}));
+  const r=items.length?await sb.from('cart_drafts').upsert({user_id:S.user.id,items,invoice_type:S.inv,note:S.note||null,updated_at:new Date().toISOString()}):await sb.from('cart_drafts').delete().eq('user_id',S.user.id);
+  return !r.error}
+async function loadDraft(){
+  const r=await sb.from('cart_drafts').select('*').eq('user_id',S.user.id).maybeSingle();if(r.error)return;S.dl=true;const d=r.data;if(!d||!Array.isArray(d.items)||!d.items.length)return;
+  let adj=0,miss=0;S.cart={};S.cartOrder=[];
+  d.items.forEach(i=>{const p=S.products.find(x=>x.code===i.code&&x.active);if(!p){miss++;return}
+    const m=Number(p.multiple);let q=r2(Number(i.qty)||0);if(Math.round(q*100)%Math.round(m*100)){q=r2(Math.round(q/m)*m);adj++}
+    if(q>0){S.cart[p.code]=q;S.cartOrder.push(p.code)}});
+  if(!S.cartOrder.length)return;S.inv=d.invoice_type||'none';S.note=d.note||'';
+  S.draftMsg={miss,adj,at:d.updated_at}}
+function setQty(code,v){const p=S.products.find(x=>x.code===code);const m=Number(p.multiple);v=Math.max(0,r2(Number(v)||0));if(Math.round(v*100)%Math.round(m*100)){const r=r2(Math.round(v/m)*m);toast(`${p.name} se pide de a ${qTxt(m,unitOf(p))}. Lo ajustamos a ${qTxt(r,unitOf(p))}.`);v=r}if(v){S.cart[code]=v;if(!S.cartOrder.includes(code))S.cartOrder.push(code)}else{delete S.cart[code];S.cartOrder=S.cartOrder.filter(c=>c!==code)}saveDraftSoon()}
 
 /* ---------- PDF para Alegra (mismo formato que pedido_11.pdf) ---------- */
 function pdfOrder(o){
@@ -420,6 +437,8 @@ document.addEventListener('click',e=>{
     else if(a==='login'){S.err='';const{error}=await sb.auth.signInWithPassword({email:$('#em').value.trim(),password:$('#pw').value});if(error){S.err='Email o contraseña incorrectos.';render();return}S.user=(await sb.auth.getUser()).data.user;await enter()}
     else if(a==='zoom'){const p=S.products.find(x=>x.code===t.dataset.c);if(!p)return;const z=document.createElement('div');z.className='zoom';z.innerHTML=`<figure><img src="${esc(imgUrl(p))}" alt="${esc(p.name)}"><figcaption style="margin-top:8px">${esc(p.name)}</figcaption></figure>`;z.onclick=()=>z.remove();document.body.appendChild(z)}
     else if(a==='rmimg'){if(!confirm('¿Quitar la foto de este producto?'))return;await clearPhoto(t.dataset.c);const l=$('#phlist');if(l)l.innerHTML=photoRows();toast('Foto quitada.')}
+    else if(a==='hidedraft'){S.draftMsg=null;render()}
+    else if(a==='savedraft'){const okk=await saveDraft();S.sheet=null;sheetRender();toast(okk?'Pedido guardado. Cuando vuelvas a abrir la app lo vas a encontrar acá para seguir.':'No pudimos guardar el pedido. Revisá tu conexión y probá de nuevo.')}
     else if(a==='install'){if(installEv){const ev=installEv;installEv=null;ev.prompt();await ev.userChoice;render()}else{S.instHelp=true;render()}}
     else if(a==='gosignup'){S.err='';S.view='signup';render()}
     else if(a==='golog'){S.err='';S.view='login';render()}
@@ -438,8 +457,8 @@ document.addEventListener('click',e=>{
     else if(a==='setpw'){const p1=$('#p1').value,p2=$('#p2').value;if(p1.length<8){S.err='La contraseña debe tener al menos 8 caracteres.';return render()}if(p1!==p2){S.err='Las contraseñas no coinciden.';return render()}
       const{error}=await sb.auth.updateUser({password:p1});if(error){S.err=error.message;return render()}S.err='';history.replaceState(null,'',location.pathname);S.user=(await sb.auth.getUser()).data.user;await enter();toast('Contraseña guardada.')}
     else if(a==='send'){const items=cartLines().map(l=>({code:l.code,qty:l.q}));
-      S.lastId=await ok(sb.rpc('submit_order',{p_invoice:S.inv,p_note:S.note,p_items:items}));S.cart={};S.cartOrder=[];S.inv='none';S.note='';S.sheet=null;await loadOrders();S.view='ok';render()}
-    else if(a==='rep'){const o=S.orders.find(x=>x.id==t.dataset.id);S.cart={};S.cartOrder=[];let miss=0;itemsOf(o).forEach(i=>{const p=S.products.find(x=>x.code===i.product_code&&x.active);if(p){S.cart[p.code]=i.original_qty;S.cartOrder.push(p.code)}else miss++});S.inv=o.invoice_type;S.view='cat';render();S.sheet='cart';sheetRender();if(miss)toast(`${miss} producto(s) ya no están disponibles y no se agregaron.`)}
+      S.lastId=await ok(sb.rpc('submit_order',{p_invoice:S.inv,p_note:S.note,p_items:items}));S.cart={};S.cartOrder=[];S.inv='none';S.note='';S.draftMsg=null;await sb.from('cart_drafts').delete().eq('user_id',S.user.id);S.sheet=null;await loadOrders();S.view='ok';render()}
+    else if(a==='rep'){const o=S.orders.find(x=>x.id==t.dataset.id);S.cart={};S.cartOrder=[];let miss=0;itemsOf(o).forEach(i=>{const p=S.products.find(x=>x.code===i.product_code&&x.active);if(p){S.cart[p.code]=i.original_qty;S.cartOrder.push(p.code)}else miss++});S.inv=o.invoice_type;S.draftMsg=null;saveDraftSoon();S.view='cat';render();S.sheet='cart';sheetRender();if(miss)toast(`${miss} producto(s) ya no están disponibles y no se agregaron.`)}
     else if(a==='acc'||a==='rej'){await ok(sb.rpc('respond_to_order',{p_order:+t.dataset.id,p_accept:a==='acc'}));await loadOrders();render();toast(a==='acc'?'Pedido confirmado.':'Pedido rechazado.')}
     else if(a==='eq'){const o=S.orders.find(x=>x.id==t.dataset.o),i=o.order_items.find(x=>x.id==t.dataset.i);const e2=S.edits[o.id]=S.edits[o.id]||{};const q=r2((e2[i.id]!==undefined?e2[i.id]:i.qty)+(+t.dataset.d)*Number(i.multiple));e2[i.id]=Math.max(0,Math.min(Number(i.original_qty),q));render()}
     else if(a==='ex'){const o=S.orders.find(x=>x.id==t.dataset.o);(S.edits[o.id]=S.edits[o.id]||{})[+t.dataset.i]=0;render()}
@@ -463,15 +482,16 @@ document.addEventListener('click',e=>{
       const pr=await sb.from('products').select('*').order('category').order('name');S.products=pr.data||[];S.prev=null;render();toast(`Listo: ${r.nuevos} nuevos, ${r.precios_cambiados} precios actualizados.`)}
     else if(a==='dlprices'){const ws=XLSX.utils.aoa_to_sheet([['Código (único, no cambiar)','Nombre (igual que en Alegra)','Categoría','Precio por kg o unidad (sin IVA)','Múltiplo','Activo','Código Alegra (opcional)','Unidad (kg o unidad)']].concat(S.products.map(p=>[p.code,p.name,p.category,Number(p.price_per_kg),Number(p.multiple),p.active?'Sí':'No',p.alegra_code||'',unitOf(p)])));const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Precios');XLSX.writeFile(wb,'precios_actuales.xlsx')}
   })});
-document.addEventListener('input',e=>{if(e.target.id==='q'){S.q=e.target.value;$('#list').innerHTML=listHTML()}else if(e.target.id==='nt'){S.note=e.target.value}else if(e.target.id==='phq'){S.phq=e.target.value;$('#phlist').innerHTML=photoRows()}});
+document.addEventListener('input',e=>{if(e.target.id==='q'){S.q=e.target.value;$('#list').innerHTML=listHTML()}else if(e.target.id==='nt'){S.note=e.target.value;saveDraftSoon()}else if(e.target.id==='phq'){S.phq=e.target.value;$('#phlist').innerHTML=photoRows()}});
 document.addEventListener('change',e=>{const t=e.target;run(async()=>{
   if(t.dataset.a==='qty'){const c=t.dataset.c;setQty(c,pn(t.value));const n=S.cart[c]||0;t.value=kg(n);const m=document.querySelector('#list [data-a="m"][data-c="'+CSS.escape(c)+'"]');if(m)m.disabled=!n;refreshBar()}
   else if(t.dataset.a==='cqty'){setQty(t.dataset.c,pn(t.value));cartPatch();refreshCat()}
-  else if(t.id==='fa'){S.inv=t.value;cartPatch()}
+  else if(t.id==='fa'){S.inv=t.value;cartPatch();saveDraftSoon()}
   else if(t.id==='phno'){S.phNo=t.checked;$('#phlist').innerHTML=photoRows()}
   else if(t.dataset.img&&t.files[0]){const f=t.files[0];t.value='';toast('Subiendo foto…');await setPhoto(t.dataset.img,f);toast('Foto guardada.');const l=$('#phlist');if(l)l.innerHTML=photoRows()}
   else if(t.id==='pf'&&t.files[0])await previewPrices(t.files[0]);
   else if(t.id==='cf'&&t.files[0]){await importClients(t.files[0]);t.value=''}})});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')saveDraft().catch(()=>{})});
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.target.id==='pw'||e.target.id==='em')){const b=document.querySelector('[data-a="login"]');if(b)b.click()}});
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
 run(boot);
