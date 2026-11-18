@@ -177,6 +177,7 @@ async function enter(){
   if(!S.profile){const q=await sb.from('access_requests').select('*').eq('user_id',S.user.id).maybeSingle();S.myReq=q.data;S.view='noaccess';return render()}
   await loadAll();
   if(staff()){await sb.rpc('expire_overdue_orders');await loadOrders();await loadReqs()}else await loadDraft().catch(()=>{});
+  await pushRefresh();
   S.view=staff()?'orders':'cat';
   subscribe();render();
 }
@@ -198,7 +199,7 @@ function subscribe(){
   chan=sb.channel('galway').on('postgres_changes',{event:'INSERT',schema:'public',table:'notifications',filter:'user_id=eq.'+S.user.id},p=>{S.notifs.unshift(p.new);toast(p.new.title+(p.new.body?': '+p.new.body:''));run(async()=>{await loadOrders();if(staff())await loadReqs();render()})})
    .on('postgres_changes',{event:'*',schema:'public',table:'orders'},()=>run(async()=>{await loadOrders();if(!S.sheet)render()})).subscribe();
 }
-const logout=async()=>{await saveDraft().catch(()=>{});if(chan)sb.removeChannel(chan);await sb.auth.signOut();Object.assign(S,{user:null,profile:null,client:null,orders:[],notifs:[],cart:{},cartOrder:[],view:'login',sheet:null});render()};
+const logout=async()=>{await saveDraft().catch(()=>{});try{if(pushCan()){const reg=await navigator.serviceWorker.ready,sub=await reg.pushManager.getSubscription();if(sub)await sb.from('push_subscriptions').delete().eq('endpoint',sub.endpoint)}}catch(e){}if(chan)sb.removeChannel(chan);await sb.auth.signOut();Object.assign(S,{user:null,profile:null,client:null,orders:[],notifs:[],cart:{},cartOrder:[],view:'login',sheet:null});render()};
 
 /* ---------- Vistas ---------- */
 function head(){
@@ -218,7 +219,7 @@ function draftNote(){const d=S.draftMsg;if(!d)return '';const ls=cartLines();if(
   return `<div class="note">Recuperamos tu pedido guardado: <b>${qSum(ls)}</b> · ${fmt(calc(ls,'none').sub)} sin IVA.${d.miss?` ${d.miss} producto(s) ya no están disponibles.`:''}${d.adj?` Ajustamos ${d.adj} cantidad(es) a los múltiplos actuales.`:''} <button class="lnk" style="width:auto;margin:0 0 0 6px" data-a="open">Ver pedido</button><button class="lnk" style="width:auto;margin:0 0 0 6px" data-a="hidedraft">Entendido</button></div>`}
 function catView(){
   const cats=['Todos',...new Set(S.products.filter(p=>p.active).map(p=>p.category))];
-  return `${installNote()}${draftNote()}<p class="note">Los precios son por kilo, o por unidad en los productos que lo indican, y no incluyen IVA.</p><input id="q" type="search" placeholder="Buscar producto" aria-label="Buscar producto" value="${esc(S.q)}"><div class="chips">${cats.map(c=>`<button data-a="c" data-c="${esc(c)}" aria-pressed="${S.cat===c}">${esc(c)}</button>`).join('')}</div><div id="list"></div>`}
+  return `${installNote()}${pushNote()}${draftNote()}<p class="note">Los precios son por kilo, o por unidad en los productos que lo indican, y no incluyen IVA.</p><input id="q" type="search" placeholder="Buscar producto" aria-label="Buscar producto" value="${esc(S.q)}"><div class="chips">${cats.map(c=>`<button data-a="c" data-c="${esc(c)}" aria-pressed="${S.cat===c}">${esc(c)}</button>`).join('')}</div><div id="list"></div>`}
 function listHTML(){
   const s=S.q.trim().toLowerCase();
   const r=S.products.filter(p=>p.active&&(S.cat==='Todos'||p.category===S.cat)&&(!s||p.name.toLowerCase().includes(s)));
@@ -273,7 +274,7 @@ const TABS=[['pending_review','Pendientes',['pending_review']],['awaiting_client
 function staffOrders(){
   const t=TABS.find(x=>x[0]===S.tab)||TABS[0];
   const r=S.orders.filter(o=>t[2].includes(o.status));
-  return `<div class="chips">${TABS.map(([k,l,s])=>{const n=S.orders.filter(o=>s.includes(o.status)).length;return `<button data-a="tab" data-t="${k}" aria-pressed="${S.tab===k}">${l} (${n})</button>`}).join('')}</div>`+(r.length?r.map(o=>orderCard(o,true)).join(''):'<p class="empty">No hay pedidos en esta lista.</p>')}
+  return pushNote()+`<div class="chips">${TABS.map(([k,l,s])=>{const n=S.orders.filter(o=>s.includes(o.status)).length;return `<button data-a="tab" data-t="${k}" aria-pressed="${S.tab===k}">${l} (${n})</button>`}).join('')}</div>`+(r.length?r.map(o=>orderCard(o,true)).join(''):'<p class="empty">No hay pedidos en esta lista.</p>')}
 function ntCard(){
   const cur=k=>Number(S.settings['alegra_nt_'+k])||0;
   const cases=[['none','Pedido con remito (sin IVA)'],['A','Pedido con factura A'],['B','Pedido con factura B']];
@@ -291,7 +292,7 @@ function clientsView(){
   return `<div class="card"><h3 style="margin:0 0 6px">Cargar clientes desde Excel</h3><p class="tag">Usá la plantilla de clientes. Si el CUIT o DNI ya existe, se actualizan sus datos.</p><input id="cf" type="file" accept=".xlsx,.xls" aria-label="Archivo de clientes"></div>
   <div class="card scroll"><h3 style="margin:0 0 6px">Clientes (${S.clients.length})</h3>${S.clients.length?`<table><tr><th>Nombre</th><th>CUIT/DNI</th><th>Vendedor</th><th>Acceso</th></tr>${S.clients.map(c=>`<tr><td>${esc(c.name)}${c.active?'':' <small class="tag">(suspendido)</small>'}</td><td>${esc(c.tax_id)}</td><td>${esc(c.seller||'')}</td><td>${S.links[c.id]?'Sí':'No'}</td></tr>`).join('')}</table>`:'<p class="tag">Todavía no hay clientes cargados.</p>'}</div>`}
 function bellSheet(){
-  return `<div class="sheet" data-a="close"><div role="dialog" aria-label="Avisos"><h2>Avisos</h2>${S.notifs.length?S.notifs.map(n=>`<div class="nt ${n.read?'':'un'}" data-a="nt" data-o="${n.order_id||''}"><b>${esc(n.title)}</b><div class="tag">${esc(n.body||'')} · ${dt(n.created_at)}</div></div>`).join(''):'<p class="empty">No tenés avisos.</p>'}<div class="acts"><button class="btn alt" data-a="readall">Marcar como leídos</button><button class="btn alt" data-a="close2">Cerrar</button></div></div></div>`}
+  return `<div class="sheet" data-a="close"><div role="dialog" aria-label="Avisos"><h2>Avisos</h2>${pushBlock()}${S.notifs.length?S.notifs.map(n=>`<div class="nt ${n.read?'':'un'}" data-a="nt" data-o="${n.order_id||''}"><b>${esc(n.title)}</b><div class="tag">${esc(n.body||'')} · ${dt(n.created_at)}</div></div>`).join(''):'<p class="empty">No tenés avisos.</p>'}<div class="acts"><button class="btn alt" data-a="readall">Marcar como leídos</button><button class="btn alt" data-a="close2">Cerrar</button></div></div></div>`}
 const cartTot=ls=>{const sub=calc(ls,'none').sub,min=Number(S.settings.min_order)||0;return totals(ls,S.inv)+(sub>=min?'':`<p class="warn">El pedido mínimo es ${fmt(min)} sin IVA. Te faltan ${fmt(min-sub)}.</p>`)};
 function cartPatch(){
   const sh=document.querySelector('#sheet .sheet');if(!sh||S.sheet!=='cart')return;
@@ -347,6 +348,35 @@ function refreshBar(){
 function refreshCat(){$('#list').innerHTML=listHTML();const b=$('.bar');const x=document.createElement('div');x.innerHTML=bar();if(b)b.remove();if(x.firstChild)document.body.appendChild(x.firstChild)}
 
 /* ---------- Carrito ---------- */
+/* ---------- Notificaciones en el celular ---------- */
+const b64u=s=>{const p='='.repeat((4-s.length%4)%4),r=atob((s+p).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from([...r].map(c=>c.charCodeAt(0)))};
+const pushCan=()=>!!(CFG.vapid&&'serviceWorker' in navigator&&'PushManager' in window&&'Notification' in window);
+async function pushRefresh(){
+  if(!CFG.vapid){S.push='none';return}
+  if(!pushCan()){S.push=isIOS()&&!isStandalone()?'ios':'none';return}
+  if(Notification.permission==='denied'){S.push='denied';return}
+  try{const reg=await navigator.serviceWorker.ready,sub=await reg.pushManager.getSubscription();
+    if(sub&&Notification.permission==='granted'){await pushSave(sub);S.push='on'}else S.push='off'}catch(e){S.push='off'}}
+async function pushSave(sub){const j=sub.toJSON();const r=await sb.from('push_subscriptions').upsert({user_id:S.user.id,endpoint:j.endpoint,p256dh:j.keys.p256dh,auth:j.keys.auth},{onConflict:'endpoint'});if(r.error)throw r.error}
+async function pushOn(){
+  const perm=await Notification.requestPermission();
+  if(perm!=='granted'){S.push=perm==='denied'?'denied':'off';return}
+  const reg=await navigator.serviceWorker.ready;
+  const sub=(await reg.pushManager.getSubscription())||await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64u(CFG.vapid)});
+  await pushSave(sub);S.push='on'}
+async function pushOff(){
+  const reg=await navigator.serviceWorker.ready,sub=await reg.pushManager.getSubscription();
+  if(sub){const ep=sub.endpoint;await sub.unsubscribe();await sb.from('push_subscriptions').delete().eq('endpoint',ep)}S.push='off'}
+function pushBlock(){
+  if(S.push==='on')return `<div class="note">Las notificaciones están activadas en este dispositivo. <button class="lnk" style="width:auto;margin:0 0 0 6px" data-a="pushoff">Desactivar</button></div>`;
+  if(S.push==='off')return `<div class="note">Activá las notificaciones para enterarte al instante, aunque tengas la app cerrada. <button class="btn" style="width:auto;margin:6px 0 0" data-a="pushon">Activar notificaciones</button></div>`;
+  if(S.push==='denied')return `<div class="note">Las notificaciones están bloqueadas para esta app. Para activarlas, habilitalas en los permisos del navegador o del celular.</div>`;
+  if(S.push==='ios')return `<div class="note">Para recibir notificaciones en tu iPhone, primero instalá la app: tocá Compartir y elegí “Agregar a inicio”. Después abrila desde el ícono y activá las notificaciones.</div>`;
+  return ''}
+function pushNote(){
+  let hide=false;try{hide=localStorage.getItem('gw_push')==='1'}catch(e){}
+  if(hide||S.push!=='off')return '';
+  return `<div class="note">Activá las notificaciones para enterarte al instante de ${staff()?'los pedidos nuevos':'los cambios en tus pedidos'}, aunque tengas la app cerrada. <button class="btn" style="width:auto;margin:6px 6px 0 0" data-a="pushon">Activar</button><button class="lnk" style="width:auto;margin:6px 0 0" data-a="hidepush">Ahora no</button></div>`}
 let draftT=null;
 function saveDraftSoon(){if(!S.profile||S.profile.role!=='client')return;clearTimeout(draftT);draftT=setTimeout(saveDraft,1200)}
 async function saveDraft(){
@@ -437,6 +467,9 @@ document.addEventListener('click',e=>{
     else if(a==='login'){S.err='';const{error}=await sb.auth.signInWithPassword({email:$('#em').value.trim(),password:$('#pw').value});if(error){S.err='Email o contraseña incorrectos.';render();return}S.user=(await sb.auth.getUser()).data.user;await enter()}
     else if(a==='zoom'){const p=S.products.find(x=>x.code===t.dataset.c);if(!p)return;const z=document.createElement('div');z.className='zoom';z.innerHTML=`<figure><img src="${esc(imgUrl(p))}" alt="${esc(p.name)}"><figcaption style="margin-top:8px">${esc(p.name)}</figcaption></figure>`;z.onclick=()=>z.remove();document.body.appendChild(z)}
     else if(a==='rmimg'){if(!confirm('¿Quitar la foto de este producto?'))return;await clearPhoto(t.dataset.c);const l=$('#phlist');if(l)l.innerHTML=photoRows();toast('Foto quitada.')}
+    else if(a==='pushon'){try{await pushOn()}finally{render();if(S.sheet==='bell')sheetRender()}if(S.push==='on')toast('Listo, vas a recibir notificaciones en este dispositivo.');else if(S.push==='denied')toast('Bloqueaste las notificaciones. Podés habilitarlas en los permisos del navegador.')}
+    else if(a==='pushoff'){await pushOff();render();if(S.sheet==='bell')sheetRender();toast('Notificaciones desactivadas en este dispositivo.')}
+    else if(a==='hidepush'){try{localStorage.setItem('gw_push','1')}catch(x){}render()}
     else if(a==='hidedraft'){S.draftMsg=null;render()}
     else if(a==='savedraft'){const okk=await saveDraft();S.sheet=null;sheetRender();toast(okk?'Pedido guardado. Cuando vuelvas a abrir la app lo vas a encontrar acá para seguir.':'No pudimos guardar el pedido. Revisá tu conexión y probá de nuevo.')}
     else if(a==='install'){if(installEv){const ev=installEv;installEv=null;ev.prompt();await ev.userChoice;render()}else{S.instHelp=true;render()}}
