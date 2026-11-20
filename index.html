@@ -199,7 +199,7 @@ function subscribe(){
   chan=sb.channel('galway').on('postgres_changes',{event:'INSERT',schema:'public',table:'notifications',filter:'user_id=eq.'+S.user.id},p=>{S.notifs.unshift(p.new);toast(p.new.title+(p.new.body?': '+p.new.body:''));run(async()=>{await loadOrders();if(staff())await loadReqs();render()})})
    .on('postgres_changes',{event:'*',schema:'public',table:'orders'},()=>run(async()=>{await loadOrders();if(!S.sheet)render()})).subscribe();
 }
-const logout=async()=>{await saveDraft().catch(()=>{});try{if(pushCan()){const reg=await navigator.serviceWorker.ready,sub=await reg.pushManager.getSubscription();if(sub)await sb.from('push_subscriptions').delete().eq('endpoint',sub.endpoint)}}catch(e){}if(chan)sb.removeChannel(chan);await sb.auth.signOut();Object.assign(S,{user:null,profile:null,client:null,orders:[],notifs:[],cart:{},cartOrder:[],edit:null,stash:null,view:'login',sheet:null});render()};
+const logout=async()=>{await saveDraft().catch(()=>{});try{if(pushCan()){const reg=await navigator.serviceWorker.ready,sub=await reg.pushManager.getSubscription();if(sub)await sb.from('push_subscriptions').delete().eq('endpoint',sub.endpoint)}}catch(e){}if(chan)sb.removeChannel(chan);await sb.auth.signOut();Object.assign(S,{user:null,profile:null,client:null,orders:[],notifs:[],cart:{},cartOrder:[],edit:null,stash:null,cartNotice:null,draftMsg:null,view:'login',sheet:null});render()};
 
 /* ---------- Vistas ---------- */
 function head(){
@@ -215,8 +215,9 @@ function installNote(){
   if(standalone||hide||staff())return '';
   const ios=/iphone|ipad|ipod/i.test(navigator.userAgent);
   return `<div class="note">${installEv?'Instalá esta app en tu celular para entrar más rápido. <button class="lnk" style="width:auto;margin:0 6px" data-a="install">Instalar</button>':''}${installEv?'':ios?'Para recibir avisos en tu iPhone: tocá Compartir y elegí “Agregar a inicio”.':'Podés instalar esta app: abrí el menú del navegador y elegí “Instalar app” o “Agregar a pantalla de inicio”.'} <button class="lnk" style="width:auto;margin:0 0 0 6px" data-a="hideinst">Ocultar</button></div>`}
-function draftNote(){if(S.edit)return `<div class="alert">Estás modificando el pedido #${S.edit}. Cuando termines, tocá <b>Ver pedido</b> y <b>Reenviar pedido</b>. <button class="lnk" style="width:auto;margin:0 0 0 6px" data-a="canceledit">Cancelar modificación</button></div>`;const d=S.draftMsg;if(!d)return '';const ls=cartLines();if(!ls.length)return '';
-  return `<div class="note">Recuperamos tu pedido guardado: <b>${qSum(ls)}</b> · ${fmt(calc(ls,'none').sub)} sin IVA.${d.miss?` ${d.miss} producto(s) ya no están disponibles.`:''}${d.adj?` Ajustamos ${d.adj} cantidad(es) a los múltiplos actuales.`:''} <button class="lnk" style="width:auto;margin:0 0 0 6px" data-a="open">Ver pedido</button><button class="lnk" style="width:auto;margin:0 0 0 6px" data-a="hidedraft">Entendido</button></div>`}
+function draftNote(){if(S.cartNotice&&cartLines().length)return noticeHTML()+draftNote2();return draftNote2()}
+function draftNote2(){if(S.edit)return `<div class="alert">Estás modificando el pedido #${S.edit}. Cuando termines, tocá <b>Ver pedido</b> y <b>Reenviar pedido</b>. <button class="lnk" style="width:auto;margin:0 0 0 6px" data-a="canceledit">Cancelar modificación</button></div>`;const d=S.draftMsg;if(!d)return '';const ls=cartLines();if(!ls.length)return '';
+  return `<div class="note">Recuperamos tu pedido guardado: <b>${qSum(ls)}</b> · ${fmt(calc(ls,'none').sub)} sin IVA.<button class="lnk" style="width:auto;margin:0 0 0 6px" data-a="open">Ver pedido</button><button class="lnk" style="width:auto;margin:0 0 0 6px" data-a="hidedraft">Entendido</button></div>`}
 function catView(){
   const cats=['Todos',...new Set(S.products.filter(p=>p.active).map(p=>p.category))];
   return `${installNote()}${pushNote()}${draftNote()}<p class="note">Los precios son por kilo, o por unidad en los productos que lo indican, y no incluyen IVA.</p><input id="q" type="search" placeholder="Buscar producto" aria-label="Buscar producto" value="${esc(S.q)}"><div class="chips">${cats.map(c=>`<button data-a="c" data-c="${esc(c)}" aria-pressed="${S.cat===c}">${esc(c)}</button>`).join('')}</div><div id="list"></div>`}
@@ -307,9 +308,9 @@ function cartPatch(){
   sh.querySelector('[data-a="send"]').disabled=calc(ls,'none').sub<(Number(S.settings.min_order)||0)}
 function cartSheet(){
   const ls=cartLines(),sub=calc(ls,'none').sub,min=Number(S.settings.min_order)||0,good=sub>=min;
-  if(!ls.length)return `<div class="sheet" data-a="close"><div role="dialog" aria-label="Tu pedido"><h2>Tu pedido</h2><p class="empty">Tu pedido está vacío.</p><div class="acts" style="justify-content:center"><button class="btn" data-a="close2">Volver al catálogo</button></div></div></div>`;
+  if(!ls.length)return `<div class="sheet" data-a="close"><div role="dialog" aria-label="Tu pedido"><h2>Tu pedido</h2>${noticeHTML()}<p class="empty">Tu pedido está vacío.</p><div class="acts" style="justify-content:center"><button class="btn" data-a="close2">Volver al catálogo</button></div></div></div>`;
   const row=l=>`<div class="cl" data-c="${esc(l.code)}"><div class="ln" style="border:0;padding:0 0 4px"><span><b>${esc(l.n)}</b></span><span>${fmt(l.p*l.q)}</span></div><div class="cl-c"><div class="step"><button data-a="cm" data-c="${esc(l.code)}" aria-label="Quitar ${qTxt(l.m,l.u)} de ${esc(l.n)}" ${l.q>l.m?'':'disabled'}>−</button><input data-a="cqty" data-c="${esc(l.code)}" inputmode="decimal" value="${kg(l.q)}" aria-label="Cantidad de ${esc(l.n)}"><button class="pl" data-a="cp" data-c="${esc(l.code)}" aria-label="Agregar ${qTxt(l.m,l.u)} de ${esc(l.n)}">+</button><span class="tag" style="margin-left:6px">${uTxt(l.q,l.u)}</span></div><button class="btn alt sm" data-a="crm" data-c="${esc(l.code)}" aria-label="Quitar ${esc(l.n)} del pedido">Quitar</button></div></div>`;
-  return `<div class="sheet" data-a="close"><div role="dialog" aria-label="Tu pedido"><h2>${S.edit?'Modificar pedido #'+S.edit:'Tu pedido'}</h2>${ls.map(row).join('')}
+  return `<div class="sheet" data-a="close"><div role="dialog" aria-label="Tu pedido"><h2>${S.edit?'Modificar pedido #'+S.edit:'Tu pedido'}</h2>${noticeHTML()}${ls.map(row).join('')}
   <label for="fa">¿Necesitás factura?</label><select id="fa"><option value="none"${S.inv==='none'?' selected':''}>No, solo remito (sin IVA)</option><option value="A"${S.inv==='A'?' selected':''}>Factura A (suma IVA)</option><option value="B"${S.inv==='B'?' selected':''}>Factura B (suma IVA)</option></select><div id="ctot" style="margin-top:10px">${cartTot(ls)}</div><label for="nt">Aclaraciones</label><textarea id="nt" rows="2" placeholder="Ej.: entregar por la mañana">${esc(S.note)}</textarea>
   <div class="acts"><button class="btn" data-a="send" ${good?'':'disabled'}>${S.edit?'Reenviar pedido':'Enviar pedido'}</button><button class="btn alt" data-a="close2">Seguir agregando</button></div>${S.edit?'<button class="lnk" data-a="canceledit">Cancelar modificación</button>':'<button class="lnk" data-a="savedraft">Guardar para continuar más tarde</button>'}</div></div>`}
 function authView(){
@@ -384,21 +385,56 @@ function startEdit(id){
   S.edit=o.id;S.inv=o.invoice_type;S.note=o.note||'';S.draftMsg=null;S.view='cat';render();S.sheet='cart';sheetRender();
   if(miss)toast(`${miss} producto(s) ya no están disponibles y no se incluyeron.`)}
 function endEdit(){const s=S.stash;S.edit=null;S.stash=null;if(s){S.cart=s.cart;S.cartOrder=s.cartOrder;S.inv=s.inv;S.note=s.note}}
+/* ---------- Catálogo al día: precios y disponibilidad ---------- */
+let catBusy=false,catAt=0;
+const cartSub=()=>calc(cartLines(),'none').sub;
+// Vuelve a leer productos del servidor, ajusta el carrito y devuelve la lista de cambios que afectan al pedido.
+async function refreshCatalog(){
+  if(catBusy||!S.profile||S.profile.role!=='client')return [];catBusy=true;
+  try{
+    const r=await sb.from('products').select('*').order('category').order('name');if(r.error||!r.data)return [];
+    const before=cartSub(),old=Object.fromEntries(S.products.map(p=>[p.code,p])),fresh=Object.fromEntries(r.data.filter(p=>p.active).map(p=>[p.code,p]));
+    const ch=[];
+    Object.keys(S.cart).forEach(code=>{
+      const o=old[code],n=fresh[code];
+      if(!n){ch.push({t:'gone',name:o?o.name:code});delete S.cart[code];S.cartOrder=S.cartOrder.filter(c=>c!==code);return}
+      if(o&&Number(o.price_per_kg)!==Number(n.price_per_kg))ch.push({t:'price',name:n.name,from:Number(o.price_per_kg),to:Number(n.price_per_kg),u:unitOf(n)});
+      const m=Number(n.multiple);let q=S.cart[code];
+      if(Math.round(q*100)%Math.round(m*100)){const nq=r2(Math.max(m,Math.round(q/m)*m));ch.push({t:'qty',name:n.name,from:q,to:nq,u:unitOf(n)});S.cart[code]=nq}});
+    S.products=r.data;catAt=Date.now();
+    (await sb.from('settings').select('*')).data?.forEach(x=>S.settings[x.key]=x.value);
+    if(ch.length){S.cartNotice={ch,before,after:cartSub()};saveDraftSoon()}
+    return ch}
+  catch(e){return []}finally{catBusy=false}}
+function noticeHTML(){const n=S.cartNotice;if(!n)return '';
+  const li=n.ch.map(c=>c.t==='price'?`<li><b>${esc(c.name)}</b>: ${fmt(c.from)} → <b>${fmt(c.to)}</b> por ${c.u==='unidad'?'unidad':'kg'}</li>`:c.t==='gone'?`<li><b>${esc(c.name)}</b> ya no está disponible y lo sacamos de tu pedido.</li>`:`<li><b>${esc(c.name)}</b>: ajustamos la cantidad de ${qTxt(c.from,c.u)} a ${qTxt(c.to,c.u)}.</li>`).join('');
+  return `<div class="alert"><b>Actualizamos tu pedido</b><ul style="margin:6px 0 6px 18px;padding:0">${li}</ul>${n.before!==n.after?`Total sin IVA: ${fmt(n.before)} → <b>${fmt(n.after)}</b>. `:''}Revisalo antes de enviarlo. <button class="lnk" style="width:auto;margin:0 0 0 6px" data-a="hidenotice">Entendido</button></div>`}
+async function refreshAndShow(){
+  if(!S.profile||S.profile.role!=='client'||!['cat','ord'].includes(S.view))return;
+  const a=document.activeElement;if(a&&['INPUT','TEXTAREA','SELECT'].includes(a.tagName))return;
+  const ch=await refreshCatalog();if(S.view==='cat'||S.sheet)render()}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&Date.now()-catAt>30000)run(refreshAndShow)});
+setInterval(()=>{if(document.visibilityState==='visible'&&Date.now()-catAt>180000)run(refreshAndShow)},60000);
 let draftT=null;
 function saveDraftSoon(){if(!S.profile||S.profile.role!=='client'||S.edit)return;clearTimeout(draftT);draftT=setTimeout(saveDraft,1200)}
 async function saveDraft(){
   clearTimeout(draftT);if(!S.user||!S.profile||S.profile.role!=='client'||!S.dl||S.edit)return false;
-  const items=cartLines().map(l=>({code:l.code,qty:l.q}));
+  const items=cartLines().map(l=>({code:l.code,qty:l.q,price:l.p,name:l.n}));
   const r=items.length?await sb.from('cart_drafts').upsert({user_id:S.user.id,items,invoice_type:S.inv,note:S.note||null,updated_at:new Date().toISOString()}):await sb.from('cart_drafts').delete().eq('user_id',S.user.id);
   return !r.error}
 async function loadDraft(){
   const r=await sb.from('cart_drafts').select('*').eq('user_id',S.user.id).maybeSingle();if(r.error)return;S.dl=true;const d=r.data;if(!d||!Array.isArray(d.items)||!d.items.length)return;
-  let adj=0,miss=0;S.cart={};S.cartOrder=[];
-  d.items.forEach(i=>{const p=S.products.find(x=>x.code===i.code&&x.active);if(!p){miss++;return}
-    const m=Number(p.multiple);let q=r2(Number(i.qty)||0);if(Math.round(q*100)%Math.round(m*100)){q=r2(Math.round(q/m)*m);adj++}
+  const ch=[];let before=0;S.cart={};S.cartOrder=[];
+  d.items.forEach(i=>{const q0=r2(Number(i.qty)||0),p=S.products.find(x=>x.code===i.code&&x.active);
+    if(i.price!=null)before+=Number(i.price)*q0;
+    if(!p){ch.push({t:'gone',name:i.name||i.code});return}
+    const m=Number(p.multiple);let q=q0;
+    if(Math.round(q*100)%Math.round(m*100)){q=r2(Math.max(m,Math.round(q/m)*m));ch.push({t:'qty',name:p.name,from:q0,to:q,u:unitOf(p)})}
+    if(i.price!=null&&Number(i.price)!==Number(p.price_per_kg))ch.push({t:'price',name:p.name,from:Number(i.price),to:Number(p.price_per_kg),u:unitOf(p)});
     if(q>0){S.cart[p.code]=q;S.cartOrder.push(p.code)}});
-  if(!S.cartOrder.length)return;S.inv=d.invoice_type||'none';S.note=d.note||'';
-  S.draftMsg={miss,adj,at:d.updated_at}}
+  if(!S.cartOrder.length){if(ch.length)S.cartNotice={ch,before,after:0};return}
+  S.inv=d.invoice_type||'none';S.note=d.note||'';
+  S.draftMsg={at:d.updated_at};if(ch.length)S.cartNotice={ch,before:d.items.every(i=>i.price!=null)?before:cartSub(),after:cartSub()}}
 function setQty(code,v){const p=S.products.find(x=>x.code===code);const m=Number(p.multiple);v=Math.max(0,r2(Number(v)||0));if(Math.round(v*100)%Math.round(m*100)){const r=r2(Math.round(v/m)*m);toast(`${p.name} se pide de a ${qTxt(m,unitOf(p))}. Lo ajustamos a ${qTxt(r,unitOf(p))}.`);v=r}if(v){S.cart[code]=v;if(!S.cartOrder.includes(code))S.cartOrder.push(code)}else{delete S.cart[code];S.cartOrder=S.cartOrder.filter(c=>c!==code)}saveDraftSoon()}
 
 /* ---------- PDF para Alegra (mismo formato que pedido_11.pdf) ---------- */
@@ -464,7 +500,7 @@ document.addEventListener('click',e=>{
     else if(a==='p'||a==='m'){const p=S.products.find(x=>x.code===t.dataset.c);setQty(p.code,r2((S.cart[p.code]||0)+(a==='p'?Number(p.multiple):-Number(p.multiple))));refreshCat()}
     else if(a==='cp'||a==='cm'){const p=S.products.find(x=>x.code===t.dataset.c);setQty(p.code,r2((S.cart[p.code]||0)+(a==='cp'?Number(p.multiple):-Number(p.multiple))));cartPatch();refreshCat()}
     else if(a==='crm'){const p=S.products.find(x=>x.code===t.dataset.c);setQty(p.code,0);cartPatch();refreshCat();toast((p?p.name:'Producto')+' se quitó del pedido.')}
-    else if(a==='open'){S.sheet='cart';sheetRender()}
+    else if(a==='open'){S.sheet='cart';sheetRender();refreshCatalog().then(ch=>{if(ch.length)render()})}
     else if(a==='close'||a==='close2'){S.sheet=null;sheetRender()}
     else if(a==='bell'){S.sheet='bell';sheetRender()}
     else if(a==='readall'){await ok(sb.from('notifications').update({read:true}).eq('user_id',S.user.id).eq('read',false));S.notifs.forEach(n=>n.read=true);render();S.sheet='bell';sheetRender()}
@@ -496,12 +532,20 @@ document.addEventListener('click',e=>{
     else if(a==='forgot'){const em=$('#em').value.trim();if(!em)return toast('Escribí tu email y volvé a tocar “Olvidé mi contraseña”.');await sb.auth.resetPasswordForEmail(em,{redirectTo:location.origin+'/'});toast('Si el email existe, te enviamos un link para elegir una contraseña nueva.')}
     else if(a==='setpw'){const p1=$('#p1').value,p2=$('#p2').value;if(p1.length<8){S.err='La contraseña debe tener al menos 8 caracteres.';return render()}if(p1!==p2){S.err='Las contraseñas no coinciden.';return render()}
       const{error}=await sb.auth.updateUser({password:p1});if(error){S.err=error.message;return render()}S.err='';history.replaceState(null,'',location.pathname);S.user=(await sb.auth.getUser()).data.user;await enter();toast('Contraseña guardada.')}
+    else if(a==='hidenotice'){S.cartNotice=null;render()}
     else if(a==='editord'){startEdit(t.dataset.id)}
     else if(a==='canceledit'){endEdit();S.sheet=null;S.view='ord';render();toast('Cancelaste la modificación. El pedido sigue esperando tu respuesta.')}
-    else if(a==='send'&&S.edit){const items=cartLines().map(l=>({code:l.code,qty:l.q}));const id=S.edit;
-      await ok(sb.rpc('resubmit_order',{p_order:id,p_invoice:S.inv,p_note:S.note,p_items:items}));endEdit();S.reLast=true;S.lastId=id;S.sheet=null;await loadOrders();S.view='ok';render()}
-    else if(a==='send'){S.reLast=false;const items=cartLines().map(l=>({code:l.code,qty:l.q}));
-      S.lastId=await ok(sb.rpc('submit_order',{p_invoice:S.inv,p_note:S.note,p_items:items}));S.cart={};S.cartOrder=[];S.inv='none';S.note='';S.draftMsg=null;await sb.from('cart_drafts').delete().eq('user_id',S.user.id);S.sheet=null;await loadOrders();S.view='ok';render()}
+    else if(a==='send'&&S.edit){const id=S.edit;
+      if((await refreshCatalog()).length){render();return toast('Cambiaron precios o productos. Revisá el pedido y enviá de nuevo.')}
+      const items=cartLines().map(l=>({code:l.code,qty:l.q,price:l.p}));
+      const rr=await sb.rpc('resubmit_order',{p_order:id,p_invoice:S.inv,p_note:S.note,p_items:items});
+      if(rr.error){if(/cambiaron/.test(rr.error.message)){await refreshCatalog();render();return toast('Cambiaron precios o productos. Revisá el pedido y enviá de nuevo.')}throw rr.error}endEdit();S.cartNotice=null;S.reLast=true;S.lastId=id;S.sheet=null;await loadOrders();S.view='ok';render()}
+    else if(a==='send'){S.reLast=false;
+      if((await refreshCatalog()).length){render();return toast('Cambiaron precios o productos. Revisá el pedido y enviá de nuevo.')}
+      const items=cartLines().map(l=>({code:l.code,qty:l.q,price:l.p}));
+      const sr=await sb.rpc('submit_order',{p_invoice:S.inv,p_note:S.note,p_items:items});
+      if(sr.error){if(/cambiaron/.test(sr.error.message)){await refreshCatalog();render();return toast('Cambiaron precios o productos. Revisá el pedido y enviá de nuevo.')}throw sr.error}
+      S.lastId=sr.data;S.cart={};S.cartOrder=[];S.inv='none';S.note='';S.draftMsg=null;S.cartNotice=null;await sb.from('cart_drafts').delete().eq('user_id',S.user.id);S.sheet=null;await loadOrders();S.view='ok';render()}
     else if(a==='rep'){const o=S.orders.find(x=>x.id==t.dataset.id);S.cart={};S.cartOrder=[];let miss=0;itemsOf(o).forEach(i=>{const p=S.products.find(x=>x.code===i.product_code&&x.active);if(p){S.cart[p.code]=i.original_qty;S.cartOrder.push(p.code)}else miss++});S.inv=o.invoice_type;S.draftMsg=null;saveDraftSoon();S.view='cat';render();S.sheet='cart';sheetRender();if(miss)toast(`${miss} producto(s) ya no están disponibles y no se agregaron.`)}
     else if(a==='acc'||a==='rej'){if(a==='rej'&&!confirm('¿Rechazar el pedido? Queda anulado y no se puede volver a abrir. (Si querés cambiarlo, usá “Modificar mi pedido”.)'))return;await ok(sb.rpc('respond_to_order',{p_order:+t.dataset.id,p_accept:a==='acc'}));await loadOrders();render();toast(a==='acc'?'Pedido confirmado.':'Pedido rechazado.')}
     else if(a==='eq'){const o=S.orders.find(x=>x.id==t.dataset.o),i=o.order_items.find(x=>x.id==t.dataset.i);const e2=S.edits[o.id]=S.edits[o.id]||{};const q=r2((e2[i.id]!==undefined?e2[i.id]:i.qty)+(+t.dataset.d)*Number(i.multiple));e2[i.id]=Math.max(0,Math.min(Number(i.original_qty),q));render()}
