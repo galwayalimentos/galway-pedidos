@@ -124,7 +124,7 @@ const qSum=ls=>{const k=r2(ls.filter(l=>l.u!=='unidad').reduce((a,l)=>a+Number(l
 const dt=s=>new Date(s).toLocaleString('es-AR',{dateStyle:'short',timeStyle:'short'});
 const ST={pending_review:'Pendiente de revisión',awaiting_client:'Esperando confirmación',confirmed:'Confirmado',preparing:'En armado',shipped:'Enviado',delivered:'Entregado',rejected:'Rechazado / anulado',expired:'Vencido'};
 const NEXT={confirmed:'preparing',preparing:'shipped',shipped:'delivered'};
-const S={view:'boot',user:null,profile:null,client:null,products:[],settings:{min_order:150000,response_hours:48,whatsapp:'5491131766172',iva_rate:0.21},orders:[],notifs:[],cart:{},cartOrder:[],cat:'Todos',q:'',inv:'none',note:'',sheet:null,edits:{},tab:'pending_review',prev:null,clients:[],links:{},reqs:[],myReq:null,su:{},lastId:null,err:'',hash0:location.hash};
+const S={view:'boot',user:null,profile:null,client:null,products:[],settings:{min_order:150000,response_hours:48,whatsapp:'5491131766172',iva_rate:0.21},orders:[],notifs:[],cart:{},cartOrder:[],cat:'Todos',q:'',inv:'none',note:'',sheet:null,edits:{},tab:'pending_review',prev:null,clients:[],links:{},zones:[],bc:{sel:{},title:'Aviso de Galway Alimentos',body:''},reqs:[],myReq:null,su:{},lastId:null,err:'',hash0:location.hash};
 const staff=()=>S.profile&&(S.profile.role==='admin'||S.profile.role==='operator');
 const admin=()=>S.profile&&S.profile.role==='admin';
 const ok=async p=>{const r=await p;if(r.error)throw r.error;return r.data};
@@ -204,7 +204,7 @@ const logout=async()=>{await saveDraft().catch(()=>{});try{if(pushCan()){const r
 /* ---------- Vistas ---------- */
 function head(){
   const who=S.client?S.client.name:(S.profile?(S.profile.full_name||'Equipo Galway'):'Pedidos mayoristas');
-  const tabs=staff()?[['orders','Pedidos',S.orders.filter(o=>o.status==='pending_review').length],['reqs','Accesos',S.reqs.filter(x=>x.status==='pending').length]].concat(admin()?[['prices','Precios',0],['clients','Clientes',0],['settings','Ajustes',0]]:[])
+  const tabs=staff()?[['orders','Pedidos',S.orders.filter(o=>o.status==='pending_review').length],['reqs','Accesos',S.reqs.filter(x=>x.status==='pending').length],['remind','Recordatorios',0]].concat(admin()?[['prices','Precios',0],['clients','Clientes',0],['settings','Ajustes',0]]:[])
     :[['cat','Catálogo',0],['ord','Mis pedidos',S.orders.filter(o=>o.status==='awaiting_client').length]];
   return `<header><div class="hd"><div class="brand"><img src="logo.png" alt="Galway Alimentos"><div class="t"><h1>Galway Alimentos</h1><p>${esc(who)}</p></div>
   <button class="ib" data-a="bell" aria-label="Avisos">Avisos${unread()?`<span class="dot">${unread()}</span>`:''}</button><button class="ib" data-a="out">Salir</button></div>
@@ -289,9 +289,38 @@ function pricesView(){
     `<div class="acts"><button class="btn" data-a="applyprices" ${p.errors.length?'disabled':''}>Aplicar cambios</button><button class="btn alt" data-a="cancelprev">Cancelar</button></div></div>`}
   h+=`<div class="card"><h3 style="margin:0 0 4px">Fotos de productos</h3><p class="tag">Una foto por producto. Se achica sola para que cargue rápido. Desde el celular podés sacarla en el momento o elegirla de la galería.</p><input id="phq" type="search" placeholder="Buscar producto" aria-label="Buscar producto" value="${esc(S.phq||'')}"><label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="phno"${S.phNo?' checked':''} style="width:auto"> Mostrar solo los que no tienen foto</label><p class="tag" style="margin:0">${S.products.filter(x=>x.image_path).length} de ${S.products.length} con foto</p><div id="phlist">${photoRows()}</div></div>`;
   return h+`<p class="tag">${S.products.length} productos cargados, ${S.products.filter(x=>x.active).length} visibles para clientes.</p>`}
+const DN=['lunes','martes','miércoles','jueves','viernes','sábado','domingo'];
+const hhmm=t=>String(t||'').slice(0,5);
+const fillMsg=(m,z)=>String(m||'').replace(/\{cliente\}/g,'Cliente').replace(/\{despacho\}/g,DN[(z.dispatch_dow||1)-1]).replace(/\{cierre\}/g,hhmm(z.cutoff_time));
+async function loadZones(){const r=await sb.from('delivery_zones').select('*').order('id');S.zones=r.data||[]}
+function remindView(){
+  const dsel=(id,v)=>`<select id="${id}">${DN.map((d,i)=>`<option value="${i+1}"${Number(v)===i+1?' selected':''}>${d[0].toUpperCase()+d.slice(1)}</option>`).join('')}</select>`;
+  const cnt=z=>{const c=S.clients.filter(x=>x.zone_id===z.id&&x.active);return `${c.length} cliente(s) en esta zona · ${c.filter(x=>S.links[x.id]).length} con usuario en la app`};
+  const zcard=z=>{const k=s=>`z${z.id}-${s}`;return `<div class="card" style="margin-bottom:10px"><h3 style="margin:0 0 2px">${esc(z.name)}${z.active?'':' <small class="tag">(pausada)</small>'}</h3><p class="tag" style="margin:0 0 6px">${cnt(z)}${z.last_sent_on?' · último envío automático: '+esc(z.last_sent_on):''}</p>
+    <label for="${k('n')}">Nombre de la zona</label><input id="${k('n')}" value="${esc(z.name)}">
+    <label for="${k('d')}">Día del recordatorio y del cierre de pedidos</label>${dsel(k('d'),z.reminder_dow)}
+    <label for="${k('r')}">Hora a la que sale el recordatorio</label><input id="${k('r')}" type="time" value="${hhmm(z.reminder_time)}">
+    <label for="${k('c')}">Hora límite para enviar pedidos</label><input id="${k('c')}" type="time" value="${hhmm(z.cutoff_time)}">
+    <label for="${k('p')}">Día de despacho</label>${dsel(k('p'),z.dispatch_dow)}
+    <label for="${k('t')}">Título del aviso</label><input id="${k('t')}" value="${esc(z.title)}">
+    <label for="${k('m')}">Mensaje</label><textarea id="${k('m')}" rows="4">${esc(z.message)}</textarea>
+    <p class="tag" style="margin:2px 0">Podés usar {cliente}, {despacho} y {cierre}: se completan solos.</p>
+    <label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="${k('s')}"${z.skip_if_ordered?' checked':''} style="width:auto"> No avisar a quien ya hizo un pedido en los últimos 3 días</label>
+    <label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="${k('a')}"${z.active?' checked':''} style="width:auto"> Envío automático activado</label>
+    <p class="tag">Sale automáticamente los ${DN[z.reminder_dow-1]} a las ${hhmm(z.reminder_time)} (hora de Argentina), si no pasó la hora límite.</p>
+    <div class="acts"><button class="btn" data-a="zsave" data-z="${z.id}">Guardar</button><button class="btn alt" data-a="ztest" data-z="${z.id}">Enviarme una prueba</button><button class="btn alt" data-a="znow" data-z="${z.id}">Enviar ahora a la zona</button><button class="btn alt" data-a="zdel" data-z="${z.id}">Eliminar</button></div></div>`};
+  const withApp=S.clients.filter(c=>c.active&&S.links[c.id]);
+  const zones=admin()?`<h3 style="margin:0 0 6px">Recordatorios automáticos por zona</h3><p class="tag">Cada cliente recibe el aviso en la app, como notificación en el celular y por mail, el día que le toca. Asigná la zona de cada cliente en la pestaña Clientes.</p>${S.zones.map(zcard).join('')||'<p class="tag">Todavía no hay zonas.</p>'}<div class="acts"><button class="btn alt" data-a="zadd">Agregar zona</button></div>`:`<p class="tag">Los recordatorios automáticos los configura el administrador.</p>`;
+  const manual=`<div class="card" style="margin-top:14px"><h3 style="margin:0 0 4px">Enviar un aviso ahora</h3><p class="tag">Elegí a qué clientes mandárselo. Solo reciben el aviso los que tienen usuario en la app.</p>
+    <label for="bct">Título</label><input id="bct" value="${esc(S.bc.title)}"><label for="bcb">Mensaje</label><textarea id="bcb" rows="4" placeholder="Ej.: Llegó mercadería nueva. Ya podés pedirla desde la app.">${esc(S.bc.body)}</textarea>
+    <label for="bcz">Elegir clientes por zona</label><select id="bcz"><option value="">Elegir por zona…</option>${S.zones.map(z=>`<option value="${z.id}">${esc(z.name)}</option>`).join('')}<option value="all">Todos los clientes con usuario</option><option value="none">Ninguno</option></select>
+    <div class="scroll" style="max-height:260px;overflow:auto;margin-top:8px">${S.clients.filter(c=>c.active).map(c=>`<label class="bcl" style="display:flex;gap:8px;align-items:center;padding:5px 0;${S.links[c.id]?'':'opacity:.5'}"><input type="checkbox" data-bc="${c.id}" ${S.links[c.id]?'':'disabled'} ${S.bc.sel[c.id]?'checked':''} style="width:auto"> <span>${esc(c.name)}${S.links[c.id]?'':' <small class="tag">(sin usuario en la app)</small>'}</span></label>`).join('')||'<p class="tag">No hay clientes cargados.</p>'}</div>
+    <p class="tag" id="bcn">${Object.values(S.bc.sel).filter(Boolean).length} de ${withApp.length} seleccionados</p><div class="acts"><button class="btn" data-a="bcsend">Enviar aviso</button></div></div>`;
+  return zones+manual}
+function bcCount(){const n=Object.values(S.bc.sel).filter(Boolean).length,t=S.clients.filter(c=>c.active&&S.links[c.id]).length,e=$('#bcn');if(e)e.textContent=`${n} de ${t} seleccionados`}
 function clientsView(){
   return `<div class="card"><h3 style="margin:0 0 6px">Cargar clientes desde Excel</h3><p class="tag">Usá la plantilla de clientes. Si el CUIT o DNI ya existe, se actualizan sus datos.</p><input id="cf" type="file" accept=".xlsx,.xls" aria-label="Archivo de clientes"></div>
-  <div class="card scroll"><h3 style="margin:0 0 6px">Clientes (${S.clients.length})</h3>${S.clients.length?`<table><tr><th>Nombre</th><th>CUIT/DNI</th><th>Vendedor</th><th>Acceso</th></tr>${S.clients.map(c=>`<tr><td>${esc(c.name)}${c.active?'':' <small class="tag">(suspendido)</small>'}</td><td>${esc(c.tax_id)}</td><td>${esc(c.seller||'')}</td><td>${S.links[c.id]?'Sí':'No'}</td></tr>`).join('')}</table>`:'<p class="tag">Todavía no hay clientes cargados.</p>'}</div>`}
+  <div class="card scroll"><h3 style="margin:0 0 6px">Clientes (${S.clients.length})</h3>${S.clients.length?`<table><tr><th>Nombre</th><th>CUIT/DNI</th><th>Vendedor</th><th>Zona</th><th>Acceso</th></tr>${S.clients.map(c=>`<tr><td>${esc(c.name)}${c.active?'':' <small class="tag">(suspendido)</small>'}</td><td>${esc(c.tax_id)}</td><td>${esc(c.seller||'')}</td><td>${admin()?`<select data-zc="${c.id}" aria-label="Zona de ${esc(c.name)}"><option value="">Sin zona</option>${S.zones.map(z=>`<option value="${z.id}"${c.zone_id===z.id?' selected':''}>${esc(z.name)}</option>`).join('')}</select>`:esc((S.zones.find(z=>z.id===c.zone_id)||{}).name||'—')}</td><td>${S.links[c.id]?'Sí':'No'}</td></tr>`).join('')}</table>`:'<p class="tag">Todavía no hay clientes cargados.</p>'}</div>`}
 function bellSheet(){
   return `<div class="sheet" data-a="close"><div role="dialog" aria-label="Avisos"><h2>Avisos</h2>${pushBlock()}${S.notifs.length?S.notifs.map(n=>`<div class="nt ${n.read?'':'un'}" data-a="nt" data-o="${n.order_id||''}"><b>${esc(n.title)}</b><div class="tag">${esc(n.body||'')} · ${dt(n.created_at)}</div></div>`).join(''):'<p class="empty">No tenés avisos.</p>'}<div class="acts"><button class="btn alt" data-a="readall">Marcar como leídos</button><button class="btn alt" data-a="close2">Cerrar</button></div></div></div>`}
 const cartTot=ls=>{const sub=calc(ls,'none').sub,min=Number(S.settings.min_order)||0;return totals(ls,S.inv)+(sub>=min?'':`<p class="warn">El pedido mínimo es ${fmt(min)} sin IVA. Te faltan ${fmt(min-sub)}.</p>`)};
@@ -333,7 +362,7 @@ function render(){
   if(['boot'].includes(S.view)){app.innerHTML='<p class="empty">Cargando…</p>';return}
   if(['login','signup','setpw','noaccess'].includes(S.view)){app.innerHTML=authView();$('#sheet').innerHTML='';return}
   let m='';
-  if(S.view==='cat')m=catView();else if(S.view==='ord')m=ordView();else if(S.view==='orders')m=staffOrders();else if(S.view==='reqs')m=reqsView();
+  if(S.view==='cat')m=catView();else if(S.view==='ord')m=ordView();else if(S.view==='orders')m=staffOrders();else if(S.view==='reqs')m=reqsView();else if(S.view==='remind')m=remindView();
   else if(S.view==='prices')m=pricesView();else if(S.view==='clients')m=clientsView();else if(S.view==='settings')m=settingsView();
   else if(S.view==='ok')m=`<div class="center"><h2>Pedido #${S.lastId} ${S.reLast?'reenviado':'enviado'}</h2><p>Lo recibimos y lo vamos a revisar. Te avisamos cuando esté confirmado.</p><div class="acts" style="justify-content:center"><button class="btn" data-a="v" data-v="ord">Ver mis pedidos</button><button class="btn alt" data-a="v" data-v="cat">Hacer otro pedido</button></div></div>`;
   app.innerHTML=head()+`<main>${m}</main>`+bar();
@@ -494,7 +523,7 @@ document.addEventListener('click',e=>{
   const t=e.target.closest('[data-a]');if(!t||t.tagName==='INPUT'||t.tagName==='SELECT')return;const a=t.dataset.a;
   if(a==='close'&&e.target!==t)return;
   run(async()=>{
-    if(a==='v'){S.view=t.dataset.v;S.sheet=null;if(S.view==='clients')await loadClients();if(S.view==='reqs')await loadReqs();if(S.view==='prices')S.prev=null;render();window.scrollTo(0,0)}
+    if(a==='v'){S.view=t.dataset.v;S.sheet=null;if(S.view==='clients'){await loadZones();await loadClients()}if(S.view==='reqs')await loadReqs();if(S.view==='remind'){await loadZones();await loadClients()}if(S.view==='prices')S.prev=null;render();window.scrollTo(0,0)}
     else if(a==='c'){S.cat=t.dataset.c;render()}
     else if(a==='tab'){S.tab=t.dataset.t;render()}
     else if(a==='p'||a==='m'){const p=S.products.find(x=>x.code===t.dataset.c);setQty(p.code,r2((S.cart[p.code]||0)+(a==='p'?Number(p.multiple):-Number(p.multiple))));refreshCat()}
@@ -532,6 +561,17 @@ document.addEventListener('click',e=>{
     else if(a==='forgot'){const em=$('#em').value.trim();if(!em)return toast('Escribí tu email y volvé a tocar “Olvidé mi contraseña”.');await sb.auth.resetPasswordForEmail(em,{redirectTo:location.origin+'/'});toast('Si el email existe, te enviamos un link para elegir una contraseña nueva.')}
     else if(a==='setpw'){const p1=$('#p1').value,p2=$('#p2').value;if(p1.length<8){S.err='La contraseña debe tener al menos 8 caracteres.';return render()}if(p1!==p2){S.err='Las contraseñas no coinciden.';return render()}
       const{error}=await sb.auth.updateUser({password:p1});if(error){S.err=error.message;return render()}S.err='';history.replaceState(null,'',location.pathname);S.user=(await sb.auth.getUser()).data.user;await enter();toast('Contraseña guardada.')}
+    else if(a==='zadd'){await ok(sb.from('delivery_zones').insert({name:'Nueva zona '+(S.zones.length+1),reminder_dow:3,dispatch_dow:4,message:'Hola! Mañana estamos despachando pedidos en tu zona. ¿Necesitás reposición para esta semana? Tenés tiempo hasta hoy a las {cierre} hs para enviar tu pedido. ¡Te esperamos!'}));await loadZones();render()}
+    else if(a==='zsave'){const id=Number(t.dataset.z),g=s=>document.getElementById('z'+id+'-'+s);
+      const v={name:g('n').value.trim(),reminder_dow:Number(g('d').value),reminder_time:g('r').value,cutoff_time:g('c').value,dispatch_dow:Number(g('p').value),title:g('t').value.trim(),message:g('m').value.trim(),skip_if_ordered:g('s').checked,active:g('a').checked};
+      if(!v.name||!v.title||!v.message)return toast('Completá el nombre, el título y el mensaje.');if(!v.reminder_time||!v.cutoff_time||v.cutoff_time<=v.reminder_time)return toast('La hora límite tiene que ser posterior a la hora del recordatorio.');
+      await ok(sb.from('delivery_zones').update(v).eq('id',id));await loadZones();render();toast('Zona guardada.')}
+    else if(a==='ztest'){await ok(sb.rpc('send_zone_test',{p_zone:Number(t.dataset.z)}));toast('Listo: te enviamos una prueba a vos. Te llega a la app, al celular y por mail.')}
+    else if(a==='znow'){const z=S.zones.find(x=>x.id==t.dataset.z);const n=S.clients.filter(c=>c.zone_id===z.id&&c.active&&S.links[c.id]).length;if(!confirm(`¿Enviar ahora el recordatorio de “${z.name}”? Les llega a hasta ${n} cliente(s) (se omiten los que ya hicieron un pedido reciente, si lo dejaste marcado).`))return;
+      const sent=await ok(sb.rpc('send_zone_now',{p_zone:z.id}));toast(`Recordatorio enviado a ${sent} cliente(s).`)}
+    else if(a==='zdel'){const z=S.zones.find(x=>x.id==t.dataset.z);if(!confirm(`¿Eliminar la zona “${z.name}”? Sus clientes quedan sin zona.`))return;await ok(sb.from('delivery_zones').delete().eq('id',z.id));await loadZones();await loadClients();render();toast('Zona eliminada.')}
+    else if(a==='bcsend'){const ids=Object.keys(S.bc.sel).filter(k=>S.bc.sel[k]);if(!ids.length)return toast('Elegí al menos un cliente.');if(!S.bc.title.trim()||!S.bc.body.trim())return toast('Escribí el título y el mensaje.');
+      if(!confirm(`¿Enviar este aviso a ${ids.length} cliente(s)?`))return;const n=await ok(sb.rpc('send_broadcast',{p_clients:ids,p_title:S.bc.title,p_body:S.bc.body}));S.bc.body='';S.bc.sel={};render();toast(`Aviso enviado a ${n} cliente(s).`)}
     else if(a==='hidenotice'){S.cartNotice=null;render()}
     else if(a==='editord'){startEdit(t.dataset.id)}
     else if(a==='canceledit'){endEdit();S.sheet=null;S.view='ord';render();toast('Cancelaste la modificación. El pedido sigue esperando tu respuesta.')}
@@ -570,11 +610,14 @@ document.addEventListener('click',e=>{
       const pr=await sb.from('products').select('*').order('category').order('name');S.products=pr.data||[];S.prev=null;render();toast(`Listo: ${r.nuevos} nuevos, ${r.precios_cambiados} precios actualizados.`)}
     else if(a==='dlprices'){const ws=XLSX.utils.aoa_to_sheet([['Código (único, no cambiar)','Nombre (igual que en Alegra)','Categoría','Precio por kg o unidad (sin IVA)','Múltiplo','Activo','Código Alegra (opcional)','Unidad (kg o unidad)']].concat(S.products.map(p=>[p.code,p.name,p.category,Number(p.price_per_kg),Number(p.multiple),p.active?'Sí':'No',p.alegra_code||'',unitOf(p)])));const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Precios');XLSX.writeFile(wb,'precios_actuales.xlsx')}
   })});
-document.addEventListener('input',e=>{if(e.target.id==='q'){S.q=e.target.value;$('#list').innerHTML=listHTML()}else if(e.target.id==='nt'){S.note=e.target.value;saveDraftSoon()}else if(e.target.id==='phq'){S.phq=e.target.value;$('#phlist').innerHTML=photoRows()}});
+document.addEventListener('input',e=>{if(e.target.id==='q'){S.q=e.target.value;$('#list').innerHTML=listHTML()}else if(e.target.id==='nt'){S.note=e.target.value;saveDraftSoon()}else if(e.target.id==='phq'){S.phq=e.target.value;$('#phlist').innerHTML=photoRows()}else if(e.target.id==='bct'){S.bc.title=e.target.value}else if(e.target.id==='bcb'){S.bc.body=e.target.value}});
 document.addEventListener('change',e=>{const t=e.target;run(async()=>{
   if(t.dataset.a==='qty'){const c=t.dataset.c;setQty(c,pn(t.value));const n=S.cart[c]||0;t.value=kg(n);const m=document.querySelector('#list [data-a="m"][data-c="'+CSS.escape(c)+'"]');if(m)m.disabled=!n;refreshBar()}
   else if(t.dataset.a==='cqty'){setQty(t.dataset.c,pn(t.value));cartPatch();refreshCat()}
   else if(t.id==='fa'){S.inv=t.value;cartPatch();saveDraftSoon()}
+  else if(t.dataset.bc){S.bc.sel[t.dataset.bc]=t.checked;bcCount()}
+  else if(t.id==='bcz'){const v=t.value;if(!v)return;S.clients.forEach(c=>{if(!c.active||!S.links[c.id])return;S.bc.sel[c.id]=v==='all'?true:v==='none'?false:String(c.zone_id)===v});document.querySelectorAll('[data-bc]').forEach(x=>x.checked=!!S.bc.sel[x.dataset.bc]);bcCount()}
+  else if(t.dataset.zc){const z=t.value?Number(t.value):null;await ok(sb.from('clients').update({zone_id:z}).eq('id',t.dataset.zc));const c=S.clients.find(x=>x.id===t.dataset.zc);if(c)c.zone_id=z;toast('Zona actualizada.')}
   else if(t.id==='phno'){S.phNo=t.checked;$('#phlist').innerHTML=photoRows()}
   else if(t.dataset.img&&t.files[0]){const f=t.files[0];t.value='';toast('Subiendo foto…');await setPhoto(t.dataset.img,f);toast('Foto guardada.');const l=$('#phlist');if(l)l.innerHTML=photoRows()}
   else if(t.id==='pf'&&t.files[0])await previewPrices(t.files[0]);
