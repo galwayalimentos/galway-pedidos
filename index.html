@@ -96,6 +96,7 @@ td.r,th.r{text-align:right}
 .scroll{overflow-x:auto}
 #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);z-index:60;background:var(--hd);color:#fff;border-radius:10px;padding:10px 16px;font-size:14px;max-width:90%;display:none}
 .nt{padding:10px 0;border-bottom:1px solid var(--line);cursor:pointer}
+.nt .nb{white-space:pre-wrap;word-break:break-word;margin:4px 0;font-size:15px;line-height:1.45}
 .nt.un b::before{content:"● ";color:var(--tq)}
 #printarea{display:none}
 @media print{body>*:not(#printarea){display:none!important}#printarea{display:block;color:#000;background:#fff;font:14px Arial,sans-serif}#printarea table{font-size:15px}#printarea th,#printarea td{border-bottom:1px solid #999;padding:6px 4px}}
@@ -124,7 +125,7 @@ const qSum=ls=>{const k=r2(ls.filter(l=>l.u!=='unidad').reduce((a,l)=>a+Number(l
 const dt=s=>new Date(s).toLocaleString('es-AR',{dateStyle:'short',timeStyle:'short'});
 const ST={pending_review:'Pendiente de revisión',awaiting_client:'Esperando confirmación',confirmed:'Confirmado',preparing:'En armado',shipped:'Enviado',delivered:'Entregado',rejected:'Rechazado / anulado',expired:'Vencido'};
 const NEXT={confirmed:'preparing',preparing:'shipped',shipped:'delivered'};
-const S={view:'boot',user:null,profile:null,client:null,products:[],settings:{min_order:150000,response_hours:48,whatsapp:'5491131766172',iva_rate:0.21},orders:[],notifs:[],cart:{},cartOrder:[],cat:'Todos',q:'',inv:'none',note:'',sheet:null,edits:{},tab:'pending_review',prev:null,clients:[],links:{},zones:[],bc:{sel:{},title:'Aviso de Galway Alimentos',body:''},reqs:[],myReq:null,su:{},lastId:null,err:'',hash0:location.hash};
+const S={view:'boot',user:null,profile:null,client:null,products:[],settings:{min_order:150000,response_hours:48,whatsapp:'5491131766172',iva_rate:0.21},orders:[],notifs:[],cart:{},cartOrder:[],cat:'Todos',q:'',inv:'none',note:'',sheet:null,edits:{},tab:'pending_review',prev:null,clients:[],links:{},zones:[],bc:{sel:{},title:'Aviso de Galway Alimentos',body:''},reqs:[],myReq:null,su:{},lastId:null,err:'',hash0:location.hash,openBell:/[?&]avisos=1/.test(location.search)};
 const staff=()=>S.profile&&(S.profile.role==='admin'||S.profile.role==='operator');
 const admin=()=>S.profile&&S.profile.role==='admin';
 const ok=async p=>{const r=await p;if(r.error)throw r.error;return r.data};
@@ -180,6 +181,7 @@ async function enter(){
   await pushRefresh();
   S.view=staff()?'orders':'cat';
   subscribe();render();
+  if(S.openBell){S.openBell=false;S.sheet='bell';render();try{history.replaceState(null,'',location.pathname)}catch(e){}}
 }
 async function loadAll(){
   const[st,pr,nt]=await Promise.all([sb.from('settings').select('*'),sb.from('products').select('*').order('category').order('name'),sb.from('notifications').select('*').order('created_at',{ascending:false}).limit(40)]);
@@ -322,7 +324,7 @@ function clientsView(){
   return `<div class="card"><h3 style="margin:0 0 6px">Cargar clientes desde Excel</h3><p class="tag">Usá la plantilla de clientes. Si el CUIT o DNI ya existe, se actualizan sus datos.</p><input id="cf" type="file" accept=".xlsx,.xls" aria-label="Archivo de clientes"></div>
   <div class="card scroll"><h3 style="margin:0 0 6px">Clientes (${S.clients.length})</h3>${S.clients.length?`<table><tr><th>Nombre</th><th>CUIT/DNI</th><th>Vendedor</th><th>Zona</th><th>Acceso</th></tr>${S.clients.map(c=>`<tr><td>${esc(c.name)}${c.active?'':' <small class="tag">(suspendido)</small>'}</td><td>${esc(c.tax_id)}</td><td>${esc(c.seller||'')}</td><td>${admin()?`<select data-zc="${c.id}" aria-label="Zona de ${esc(c.name)}"><option value="">Sin zona</option>${S.zones.map(z=>`<option value="${z.id}"${c.zone_id===z.id?' selected':''}>${esc(z.name)}</option>`).join('')}</select>`:esc((S.zones.find(z=>z.id===c.zone_id)||{}).name||'—')}</td><td>${S.links[c.id]?'Sí':'No'}</td></tr>`).join('')}</table>`:'<p class="tag">Todavía no hay clientes cargados.</p>'}</div>`}
 function bellSheet(){
-  return `<div class="sheet" data-a="close"><div role="dialog" aria-label="Avisos"><h2>Avisos</h2>${pushBlock()}${S.notifs.length?S.notifs.map(n=>`<div class="nt ${n.read?'':'un'}" data-a="nt" data-o="${n.order_id||''}"><b>${esc(n.title)}</b><div class="tag">${esc(n.body||'')} · ${dt(n.created_at)}</div></div>`).join(''):'<p class="empty">No tenés avisos.</p>'}<div class="acts"><button class="btn alt" data-a="readall">Marcar como leídos</button><button class="btn alt" data-a="close2">Cerrar</button></div></div></div>`}
+  return `<div class="sheet" data-a="close"><div role="dialog" aria-label="Avisos"><h2>Avisos</h2>${pushBlock()}${S.notifs.length?S.notifs.map(n=>`<div class="nt ${n.read?'':'un'}" data-a="nread" data-id="${n.id}"><b>${esc(n.title)}</b><div class="nb">${esc(n.body||'')}</div><div class="tag">${dt(n.created_at)}</div>${n.order_id?`<div class="acts"><button class="btn alt sm" data-a="nt" data-o="${n.order_id}">Ver pedido</button></div>`:''}</div>`).join(''):'<p class="empty">No tenés avisos.</p>'}<div class="acts"><button class="btn alt" data-a="readall">Marcar como leídos</button><button class="btn alt" data-a="close2">Cerrar</button></div></div></div>`}
 const cartTot=ls=>{const sub=calc(ls,'none').sub,min=Number(S.settings.min_order)||0;return totals(ls,S.inv)+(sub>=min?'':`<p class="warn">El pedido mínimo es ${fmt(min)} sin IVA. Te faltan ${fmt(min-sub)}.</p>`)};
 function cartPatch(){
   const sh=document.querySelector('#sheet .sheet');if(!sh||S.sheet!=='cart')return;
@@ -444,6 +446,12 @@ async function refreshAndShow(){
   const ch=await refreshCatalog();if(S.view==='cat'||S.sheet)render()}
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&Date.now()-catAt>30000)run(refreshAndShow)});
 setInterval(()=>{if(document.visibilityState==='visible'&&Date.now()-catAt>180000)run(refreshAndShow)},60000);
+/* ---------- Avisos al día ---------- */
+async function loadNotifs(){const r=await sb.from('notifications').select('*').order('created_at',{ascending:false}).limit(40);if(!r.error&&r.data)S.notifs=r.data}
+const typing=()=>{const a=document.activeElement;return a&&['INPUT','TEXTAREA','SELECT'].includes(a.tagName)};
+async function refreshLive(){if(!S.profile)return;await Promise.all([loadNotifs(),loadOrders()]);subscribe();if(S.sheet==='bell')sheetRender();else if(!typing()&&!['login','signup','setpw','noaccess','boot'].includes(S.view))render()}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')run(refreshLive)});
+if('serviceWorker' in navigator)navigator.serviceWorker.addEventListener('message',e=>{if(e.data&&e.data.type==='avisos')run(async()=>{await refreshLive();if(S.profile){S.sheet='bell';render()}})});
 let draftT=null;
 function saveDraftSoon(){if(!S.profile||S.profile.role!=='client'||S.edit)return;clearTimeout(draftT);draftT=setTimeout(saveDraft,1200)}
 async function saveDraft(){
@@ -533,6 +541,7 @@ document.addEventListener('click',e=>{
     else if(a==='close'||a==='close2'){S.sheet=null;sheetRender()}
     else if(a==='bell'){S.sheet='bell';sheetRender()}
     else if(a==='readall'){await ok(sb.from('notifications').update({read:true}).eq('user_id',S.user.id).eq('read',false));S.notifs.forEach(n=>n.read=true);render();S.sheet='bell';sheetRender()}
+    else if(a==='nread'){const n=S.notifs.find(x=>String(x.id)===t.dataset.id);if(n&&!n.read){n.read=true;t.classList.remove('un');const d=document.querySelector('.ib .dot'),u=unread();if(d){if(u)d.textContent=u;else d.remove()}sb.from('notifications').update({read:true}).eq('id',n.id).then(()=>{})}}
     else if(a==='nt'){const id=t.dataset.o;S.sheet=null;S.view=staff()?'orders':'ord';render();if(id)window.scrollTo(0,0)}
     else if(a==='hideinst'){try{localStorage.setItem('gw_inst','1')}catch(x){}render()}
     else if(a==='out')await logout();
